@@ -22,14 +22,16 @@ import (
 )
 
 const (
-	// TaintKey is a node's CPI taint key that causes NoSchedule effect.
-	TaintKey = "node.cloudprovider.kubernetes.io/uninitialized"
 	// NetHealthcheckFile is default path for healtcheck config file.
 	NetHealthcheckFile = "/opt/network-operator/net-healthcheck-config.yaml"
-	configEnv          = "OPERATOR_NETHEALTHCHECK_CONFIG"
-	nodenameEnv        = "NODE_NAME"
-	defaultTCPTimeout  = 3
-	DefaultRetries     = 3
+	// NodenameEnv is the name of env variable that stores node's name
+	NodenameEnv = "NODE_NAME"
+	// TaintKey is a node's CPI taint key that causes NoSchedule effect.
+	TaintKey = "node.cloudprovider.kubernetes.io/uninitialized"
+
+	defaultRetries    = 3
+	configEnv         = "OPERATOR_NETHEALTHCHECK_CONFIG"
+	defaultTCPTimeout = 3
 )
 
 // HealthChecker is a struct that holds data required for networking healthcheck.
@@ -46,7 +48,7 @@ type HealthChecker struct {
 func NewHealthChecker(clusterClient client.Client, toolkit *Toolkit, netconf *NetHealthcheckConfig) (*HealthChecker, error) {
 	var retries int
 	if netconf.Retries <= 0 {
-		retries = DefaultRetries
+		retries = defaultRetries
 	} else {
 		retries = netconf.Retries
 	}
@@ -70,7 +72,7 @@ func (hc *HealthChecker) IsInitialized() bool {
 func (hc *HealthChecker) RemoveTaint(ctx context.Context, taintKey string) error {
 	node := &corev1.Node{}
 	err := hc.client.Get(ctx,
-		types.NamespacedName{Name: os.Getenv(nodenameEnv)}, node)
+		types.NamespacedName{Name: os.Getenv(NodenameEnv)}, node)
 	if err != nil {
 		hc.Logger.Error(err, "error while getting node's info")
 		return fmt.Errorf("error while getting node's info: %w", err)
