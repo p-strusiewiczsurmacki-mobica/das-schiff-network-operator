@@ -117,7 +117,7 @@ func main() {
 		options = ctrl.Options{Scheme: scheme}
 	}
 
-	if options.MetricsBindAddress != "0" {
+	if options.Metrics.BindAddress != "0" {
 		err = initCollectors()
 		if err != nil {
 			setupLog.Error(err, "unable to initialize metrics collectors")
