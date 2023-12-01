@@ -1,0 +1,7 @@
+apiVersion: network.schiff.telekom.de/v1alpha1
+kind: IPAddressPool
+metadata:
+  name: ipaddresspool-sample
+spec:
+  ipv4: 192.168.100.0/24
+  ipv6: ffff::/8

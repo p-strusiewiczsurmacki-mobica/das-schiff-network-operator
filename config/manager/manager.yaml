@@ -38,7 +38,8 @@ spec:
       containers:
       - command:
         - /manager
-        args: []
+        args:
+          - -only-attach-bpf
         env:
         - name: NODE_NAME
           valueFrom:

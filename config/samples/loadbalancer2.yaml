@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service2
+  annotations:
+    network.schiff.telekom.de/pool: ipaddresspool-sample
+spec:
+  selector:
+    app: example
+  ports:
+    - port: 8764
+      targetPort: 9373
+  type: LoadBalancer

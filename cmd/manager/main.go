@@ -199,6 +199,13 @@ func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *c
 	}
 
 	if onlyBPFMode {
+		if err := (&controllers.ServiceReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr, false); err != nil {
+			return fmt.Errorf("unable to create Service controller: %w", err)
+		}
+
 		clusterClient, err := client.New(clientConfig, client.Options{})
 		if err != nil {
 			return fmt.Errorf("error creating controller-runtime client: %w", err)

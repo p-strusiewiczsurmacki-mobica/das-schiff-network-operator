@@ -17,8 +17,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: ghcr.io/telekom/das-schiff-network-operator
-  newTag: latest
+  newName: localhost:5000/network-operator
+  newTag: v10
 - name: frr-exporter
   newName: ghcr.io/telekom/frr-exporter
   newTag: latest

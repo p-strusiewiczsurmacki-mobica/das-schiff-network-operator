@@ -7,12 +7,64 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - services/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - services/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
   - nodes
   verbs:
   - get
   - list
   - update
   - watch
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - ipaddresspools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - ipaddresspools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - ipaddresspools/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - network.schiff.telekom.de
   resources:
