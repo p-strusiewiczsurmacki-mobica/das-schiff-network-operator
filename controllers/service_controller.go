@@ -51,10 +51,13 @@ type ServiceReconciler struct {
 }
 
 const (
-	prefix            = "network.schiff.telekom.de"
-	ipAnnotation      = prefix + "/ipAddresses"
-	poolAnnotation    = prefix + "/pool"
-	loadBalancerClass = prefix + "/internal-lb"
+	prefix             = "network.schiff.telekom.de"
+	ipAnnotation       = prefix + "/ipAddresses"
+	poolAnnotation     = prefix + "/pool"
+	loadBalancerClass  = prefix + "/internal-lb"
+	ipFamilyAnnotation = prefix + "/ipFamily"
+	ipv4Family         = "ipv4"
+	ipv6Family         = "ipv6"
 )
 
 //+kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;update;watch
@@ -72,153 +75,115 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	logger.Info("Context", "ctx", ctx)
 
+	// find requested service
 	svc := corev1.Service{}
 	if err := r.Client.Get(ctx, req.NamespacedName, &svc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error getting service %s-%s: %w", req.Namespace, req.Name, err)
 	}
 
-	// logger.Info("Service found")
-
+	// get target pool from the service's annotation
 	targetPool, ok := svc.Annotations[poolAnnotation]
 	if !ok {
 		return ctrl.Result{}, fmt.Errorf("error getting pool for service %s-%s", req.Namespace, req.Name)
 	}
 
-	// logger.Info("Target pool: ", "targetPool", targetPool)
-
+	// get pool from the cluster
 	pool := networkv1alpha1.IPAddressPool{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: "", Name: targetPool}, &pool); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error getting pool %s for service %s-%s: %w", targetPool, req.Namespace, req.Name, err)
 	}
 
-	// logger.Info("Found pool: ", "pool", pool)
-
+	// list all services - this will be used to find addresses frpom the pool that were already used
 	allSvc := corev1.ServiceList{}
 	if err := r.Client.List(ctx, &allSvc, &client.ListOptions{}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error getting services: %w", err)
 	}
 
-	// logger.Info("found services")
-
+	// check if pool is IPv4, IPv6 or DualStack
 	isIPv4Pool := pool.Spec.IPv4 != ""
 	isIPv6Pool := pool.Spec.IPv6 != ""
 
-	ipv4Pool := &netipx.IPSet{}
-	ipv6Pool := &netipx.IPSet{}
-	ipv4Full := &netipx.IPSet{}
-	ipv6Full := &netipx.IPSet{}
+	// check if request is IPv4, IPv6 or DualStack
+	requestIPv4 := strings.Contains(svc.Annotations[ipFamilyAnnotation], ipv4Family)
+	requestIPv6 := strings.Contains(svc.Annotations[ipFamilyAnnotation], ipv6Family)
+
+	// if request's IP family is not supported by the pool return error
+	if !isIPv4Pool && requestIPv4 {
+		return ctrl.Result{}, fmt.Errorf("cannot request IPv4 from non-IPv4 pool")
+	}
+
+	if !isIPv6Pool && requestIPv6 {
+		return ctrl.Result{}, fmt.Errorf("cannot request IPv6 from non-IPv6 pool")
+	}
+
+	// we create IPSets for IPv4 and IPv6 networks of the pools (if supported and requested)
+	// iSets is a map that can be referenced as ipSets[ipFamily][full/free] to get full network or only free addresses
+	ipSets := map[string]map[string]*netipx.IPSet{}
 	var err error
 
-	if isIPv4Pool {
-		// logger.Info("will find ipv4 ipset")
-		if ipv4Full, err = fullSetFromCidr(pool.Spec.IPv4); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		if ipv4Pool, err = findFreeAddresses(pool.Spec.IPv4, allSvc.Items); err != nil {
+	if isIPv4Pool && requestIPv4 {
+		if ipSets[ipv4Family], err = getAddrSets(pool.Spec.IPv4, allSvc.Items); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	if isIPv6Pool {
-		// logger.Info("will find ipv6 ipset")
-		if ipv6Full, err = fullSetFromCidr(pool.Spec.IPv6); err != nil {
-			return ctrl.Result{}, err
-		}
-		if ipv6Pool, err = findFreeAddresses(pool.Spec.IPv6, allSvc.Items); err != nil {
+	if isIPv6Pool && requestIPv6 {
+		if ipSets[ipv6Family], err = getAddrSets(pool.Spec.IPv6, allSvc.Items); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
+	// check if service was not already processes and contains IP address from the pool
+	// if so, we should not process the request (?)
 	if svc.Annotations[ipAnnotation] != "" && len(svc.Spec.ExternalIPs) > 0 {
-		logger.Info("Probably aready processed")
 		for _, ip := range svc.Spec.ExternalIPs {
-			logger.Info("Checking IP", "ip", ip)
 			exIP, err := netip.ParseAddr(ip)
 			if err != nil {
-				logger.Info("unable to parse address")
 				return ctrl.Result{}, err
 			}
-			if ipv4Full.Contains(exIP) || ipv6Full.Contains(exIP) {
-				logger.Info("already processed -return")
+			if ipSets[ipv4Family]["full"].Contains(exIP) || ipSets[ipv6Family]["full"].Contains(exIP) {
 				return ctrl.Result{}, nil
 			}
 		}
 	}
 
+	// find addresses that can be used by the service
+	// this might be later a part of separate IPAM component
+	ipFamilies := strings.Split(svc.Annotations[ipAnnotation], ",")
+
+	var ips []*netip.Addr
+	for _, ipFamily := range ipFamilies {
+		switch ipFamily {
+		case ipv4Family:
+			ips = append(ips, getFirstAddress(ipSets[ipv4Family]["free"]))
+		case ipv6Family:
+			ips = append(ips, getFirstAddress(ipSets[ipv6Family]["free"]))
+		default:
+			return ctrl.Result{}, fmt.Errorf("%s is nat a valid IP Address family - please use ipv4 or ipv6", ipFamily)
+		}
+	}
+
+	//  and create annotation and externalIPs slice for service Spec
 	annotation := ""
-
-	var ipv4, ipv6 *netip.Addr
-
-	// it seems that's not what the IPFamilyPolicy field is for. Need to change that.
-	switch *svc.Spec.IPFamilyPolicy {
-	case v1.IPFamilyPolicyRequireDualStack:
-		if !isIPv4Pool || !isIPv6Pool {
-			return ctrl.Result{}, fmt.Errorf("error updating service %s-%s: referenced pool is not a dualstack pool", req.Namespace, req.Name)
-		}
-		ipv4 = getFirstAddress(ipv4Pool)
-		ipv6 = getFirstAddress(ipv6Pool)
-
-		annotation = ipv4.String() + "," + ipv6.String()
-	case v1.IPFamilyPolicyPreferDualStack:
-		if isIPv4Pool {
-			ipv4 = getFirstAddress(ipv4Pool)
-			annotation = ipv4.String()
-		}
-		if annotation != "" {
+	externalIPs := []string{}
+	for i, ip := range ips {
+		s := ip.String()
+		annotation += s
+		if i < (len(ips) - 1) {
 			annotation += ","
 		}
-		if isIPv6Pool {
-			ipv6 = getFirstAddress(ipv6Pool)
-			annotation += ipv6.String()
-		}
-	default:
-		// should get cluster default family or spec.ipFamilies
-		if svc.Spec.IPFamilies[0] == corev1.IPv4Protocol {
-			if isIPv4Pool {
-				ipv4 = getFirstAddress(ipv4Pool)
-				annotation = ipv4.String()
-				break
-			}
-			return ctrl.Result{}, fmt.Errorf("cannot assign IPv4 address from non-IPv4 pool")
-		}
-		if svc.Spec.IPFamilies[0] == corev1.IPv4Protocol {
-			if isIPv6Pool {
-				ipv6 = getFirstAddress(ipv6Pool)
-				annotation = ipv6.String()
-				break
-			}
-			return ctrl.Result{}, fmt.Errorf("cannot assign IPv6 address from non-IPv6 pool")
-		}
+		externalIPs = append(externalIPs, s)
 	}
 
-	logger.Info("will apply annotation", "annotation", annotation)
+	// set annotation and ExternalIPs and update the service
 	svc.Annotations[ipAnnotation] = annotation
-
-	// logger.Info("will set loadbalancer class")
-
-	// class := loadBalancerClass
-	// svc.Spec.LoadBalancerClass = &class
-
-	ips := []string{}
-	if ipv4 != nil {
-		ips = append(ips, ipv4.String())
-	}
-
-	if ipv6 != nil {
-		ips = append(ips, ipv6.String())
-	}
-
-	logger.Info("Applying external IPs", "ips", ips)
-
-	svc.Spec.ExternalIPs = ips
-
-	logger.Info("will update service")
+	svc.Spec.ExternalIPs = externalIPs
 	if err := r.Client.Update(ctx, &svc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error updating service %s-%s: %w", req.Namespace, req.Name, err)
 	}
 
-	logger.Info("all OK")
+	logger.Info("created service with annotation", "namespace", svc.Namespace, "name", svc.Name, "annotation", svc.Annotations[ipAnnotation])
+
 	return ctrl.Result{}, nil
 }
 
@@ -260,7 +225,7 @@ func findFreeAddresses(cidr string, services []v1.Service) (*netipx.IPSet, error
 	}
 
 	// remove first and last address in network
-	// as cidr was passed to  it should be safe to assume that only 1 range was created in ipSet
+	// as cidr was passed to ipSet should be safe to assume that only 1 range was created in ipSet
 	builder.Remove(ipPool.Ranges()[0].From())
 	builder.Remove(ipPool.Ranges()[0].To())
 
@@ -380,6 +345,24 @@ func isLoadBalancerService(object client.Object) bool {
 	}
 
 	return true
+}
+
+func getAddrSets(cidr string, services []v1.Service) (map[string]*netipx.IPSet, error) {
+	sets := map[string]*netipx.IPSet{}
+
+	if set, err := fullSetFromCidr(cidr); err != nil {
+		return nil, err
+	} else {
+		sets["full"] = set
+	}
+
+	if set, err := findFreeAddresses(cidr, services); err != nil {
+		return nil, err
+	} else {
+		sets["free"] = set
+	}
+
+	return sets, nil
 }
 
 // functions stolen from metallb/kube-vip
