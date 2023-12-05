@@ -159,25 +159,23 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		case ipv6Family:
 			ips = append(ips, getFirstAddress(ipSets[ipv6Family]["free"]))
 		default:
-			return ctrl.Result{}, fmt.Errorf("%s is nat a valid IP Address family - please use ipv4 or ipv6", ipFamily)
+			logger.Error(fmt.Errorf("invalid family"), "%s is nat a valid IP Address family - please use ipv4 or ipv6", ipFamily)
 		}
 	}
 
-	//  and create annotation and externalIPs slice for service Spec
+	// create annotation
 	annotation := ""
-	externalIPs := []string{}
+	// externalIPs := []string{}
 	for i, ip := range ips {
 		s := ip.String()
 		annotation += s
 		if i < (len(ips) - 1) {
 			annotation += ","
 		}
-		externalIPs = append(externalIPs, s)
 	}
 
-	// set annotation and ExternalIPs and update the service
+	// set annotation and update the service
 	svc.Annotations[ipAnnotation] = annotation
-	svc.Spec.ExternalIPs = externalIPs
 	if err := r.Client.Update(ctx, &svc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error updating service %s-%s: %w", req.Namespace, req.Name, err)
 	}
