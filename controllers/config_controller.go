@@ -19,45 +19,59 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// RoutingTableReconciler reconciles a RoutingTable object.
-type RoutingTableReconciler struct {
+const requeueTime = 10 * time.Minute
+
+// ConfigReconciler reconciles a Layer2NetworkConfiguration, RoutingTable and VRFRouteConfiguration objects.
+type ConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Reconciler *reconciler.Reconciler
+	Reconciler *reconciler.ConfigReconciler
 }
+
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=layer2networkconfigurations,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=layer2networkconfigurations/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=layer2networkconfigurations/finalizers,verbs=update
 
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables/finalizers,verbs=update
 
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations/finalizers,verbs=update
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
 // For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
-func (r *RoutingTableReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
+func (r *ConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	// Run ReconcileDebounced through debouncer
 	r.Reconciler.Reconcile(ctx)
 
 	return ctrl.Result{RequeueAfter: requeueTime}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RoutingTableReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.RoutingTable{}).
+		Named("config controller").
+		Watches(&networkv1alpha1.Layer2NetworkConfiguration{}, &handler.EnqueueRequestForObject{}).
+		Watches(&networkv1alpha1.RoutingTable{}, &handler.EnqueueRequestForObject{}).
+		Watches(&networkv1alpha1.VRFRouteConfiguration{}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
