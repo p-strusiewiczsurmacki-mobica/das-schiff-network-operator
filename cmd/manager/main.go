@@ -139,8 +139,11 @@ func main() {
 
 	var agentClient agent.Client
 	switch agentType {
-	case "vrf-igbp":
+	case "vrf-igbp", "netns":
 		agentClient, err = grpcclient.NewClient(fmt.Sprintf("%s:%d", agentAddr, agentPort))
+		if err != nil {
+			setupLog.Error(err, "error creating agent's client")
+		}
 	default:
 		setupLog.Error(fmt.Errorf("agent %s is currently not supported", agentType), "unsupported error")
 		os.Exit(1)

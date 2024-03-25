@@ -18,13 +18,13 @@ type VRFInformation struct {
 
 	table    int
 	bridgeID int
-	vrfID    int
+	VrfID    int
 
 	MarkForDelete bool
 }
 
 // Create will create a VRF and all interfaces necessary to operate the EVPN and leaking.
-func (n *Manager) CreateL3(info VRFInformation) error {
+func (n *Manager) CreateL3(info VRFInformation, createVeth bool) error {
 	if len(info.Name) > maxVRFnameLen {
 		return fmt.Errorf("name of VRF can not be longer than 12 (15-3 prefix) chars")
 	}
@@ -47,12 +47,14 @@ func (n *Manager) CreateL3(info VRFInformation) error {
 		return fmt.Errorf("error attaching BPF: %w", err)
 	}
 
-	veth, err := n.createLink(vrfToDefaultPrefix+info.Name, defaultToVrfPrefix+info.Name, vrf.Attrs().Index, info.linkMTU(), true)
-	if err != nil {
-		return err
-	}
-	if err := bpf.AttachToInterface(veth); err != nil {
-		return fmt.Errorf("error attaching BPF: %w", err)
+	if createVeth {
+		veth, err := n.createLink(vrfToDefaultPrefix+info.Name, defaultToVrfPrefix+info.Name, vrf.Attrs().Index, info.linkMTU(), true)
+		if err != nil {
+			return err
+		}
+		if err := bpf.AttachToInterface(veth); err != nil {
+			return fmt.Errorf("error attaching BPF: %w", err)
+		}
 	}
 
 	vxlan, err := n.createVXLAN(vxlanPrefix+info.Name, bridge.Attrs().Index, info.VNI, defaultMtu, true, false)

@@ -54,7 +54,7 @@ func (n *Manager) ListVRFInterfaces() (map[int]VRFInformation, error) {
 		info := VRFInformation{}
 		info.table = int(vrf.Table)
 		info.Name = link.Attrs().Name
-		info.vrfID = vrf.Attrs().Index
+		info.VrfID = vrf.Attrs().Index
 		infos[info.table] = info
 	}
 
@@ -98,7 +98,7 @@ func (n *Manager) ListL3() ([]VRFInformation, error) {
 		info := VRFInformation{}
 		info.table = int(vrf.Table)
 		info.Name = link.Attrs().Name[3:]
-		info.vrfID = vrf.Attrs().Index
+		info.VrfID = vrf.Attrs().Index
 
 		n.updateL3Indices(&info)
 
@@ -272,4 +272,12 @@ func (*Manager) ListTaas() ([]TaasInformation, error) {
 	}
 
 	return infos, nil
+}
+
+func (n *Manager) GetLinkByName(name string) (netlink.Link, error) {
+	link, err := n.toolkit.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("error getting link by name: %w", err)
+	}
+	return link, nil
 }

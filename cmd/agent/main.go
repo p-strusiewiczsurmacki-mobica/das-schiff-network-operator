@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/go-logr/zapr"
+	netnsadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/netns"
 	vrfigbpadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/vrf_igbp"
 	"github.com/telekom/das-schiff-network-operator/pkg/agent"
 	agentpb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
@@ -26,6 +27,7 @@ func main() {
 			"Command-line flags override configuration from this file.")
 	flag.StringVar(&agentType, "agent", "vrf-igbp", "Use selected agent type (default: vrf-igbp).")
 	flag.IntVar(&port, "port", agent.DefaultPort, fmt.Sprintf("gRPC listening port. (default: %d)", agent.DefaultPort))
+	flag.Parse()
 
 	zc := zap.NewProductionConfig()
 	zc.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
@@ -43,6 +45,8 @@ func main() {
 	switch agentType {
 	case "vrf-igbp":
 		adapter, err = vrfigbpadapter.New(anycastTracker, log)
+	case "netns":
+		adapter, err = netnsadapter.New(anycastTracker, log)
 	default:
 		log.Error(fmt.Errorf("agent is currently not supported"), "type", agentType)
 		os.Exit(1)

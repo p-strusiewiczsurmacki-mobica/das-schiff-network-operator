@@ -9,4 +9,4 @@ kind: Kustomization
 images:
 - name: agent
   newName: ghcr.io/telekom/agent
-  newTag: v1
+  newTag: v3

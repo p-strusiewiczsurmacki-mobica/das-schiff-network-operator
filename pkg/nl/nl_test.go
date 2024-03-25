@@ -1258,7 +1258,7 @@ var _ = Describe("CreateL3()", func() {
 		vrfInfo := VRFInformation{
 			Name: "reallyLongTestNameOver15Chars",
 		}
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 	})
 	It("returns error if cannot find free table ID", func() {
@@ -1270,7 +1270,7 @@ var _ = Describe("CreateL3()", func() {
 
 		netlinkMock.EXPECT().LinkList().Return(nil, errors.New("error"))
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 	})
 	It("returns error if cannot create VRF - failed to add link", func() {
@@ -1286,7 +1286,7 @@ var _ = Describe("CreateL3()", func() {
 		netlinkMock.EXPECT().LinkByName(gomock.Any()).Return(&netlink.Vrf{}, nil)
 		netlinkMock.EXPECT().LinkAdd(gomock.Any()).Return(errors.New("failed to add link"))
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 	})
 	It("returns error if cannot create VRF - failed to disable EUI generation", func() {
@@ -1302,7 +1302,7 @@ var _ = Describe("CreateL3()", func() {
 		netlinkMock.EXPECT().LinkByName(gomock.Any()).Return(&netlink.Vrf{}, nil)
 		netlinkMock.EXPECT().LinkAdd(gomock.Any()).Return(nil)
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 	})
 	It("returns error if cannot create VRF - failed to set link up", func() {
@@ -1326,7 +1326,7 @@ var _ = Describe("CreateL3()", func() {
 		addrGenModePathIPv6 := fmt.Sprintf("%s/ipv6/conf/%s", procSysNetPath, vrfName)
 		createInterfaceFile(addrGenModePathIPv6 + "/" + addrGenMode)
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 		procSysNetPath = oldProcSysNetPath
 	})
@@ -1354,7 +1354,7 @@ var _ = Describe("CreateL3()", func() {
 		addrGenModePathIPv6 := fmt.Sprintf("%s/ipv6/conf/%s", procSysNetPath, vrfName)
 		createInterfaceFile(addrGenModePathIPv6 + "/" + addrGenMode)
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 		procSysNetPath = oldProcSysNetPath
 	})
@@ -1382,7 +1382,7 @@ var _ = Describe("CreateL3()", func() {
 		addrGenModePathIPv6 := fmt.Sprintf("%s/ipv6/conf/%s", procSysNetPath, vrfName)
 		createInterfaceFile(addrGenModePathIPv6 + "/" + addrGenMode)
 
-		err := nm.CreateL3(vrfInfo)
+		err := nm.CreateL3(vrfInfo, true)
 		Expect(err).To(HaveOccurred())
 		procSysNetPath = oldProcSysNetPath
 	})

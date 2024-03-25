@@ -107,29 +107,7 @@ func (n *Manager) ParseIPAddresses(addresses []string) ([]*netlink.Addr, error) 
 	return addrs, nil
 }
 
-func (n *Manager) CreateL2(info *Layer2Information) error {
-	masterIdx := -1
-	if info.VRF != "" {
-		l3Info, err := n.GetL3ByName(info.VRF)
-		if err != nil {
-			return err
-		}
-		masterIdx = l3Info.vrfID
-	}
-
-	if len(info.AnycastGateways) > 0 && info.AnycastMAC == nil {
-		return fmt.Errorf("anycastGateways require anycastMAC to be set")
-	}
-
-	bridge, err := n.setupBridge(info, masterIdx)
-	if err != nil {
-		return err
-	}
-
-	return n.setupVXLAN(info, bridge)
-}
-
-func (n *Manager) setupBridge(info *Layer2Information, masterIdx int) (*netlink.Bridge, error) {
+func (n *Manager) SetupBridge(info *Layer2Information, masterIdx int) (*netlink.Bridge, error) {
 	bridge, err := n.createBridge(fmt.Sprintf("%s%d", layer2Prefix, info.VlanID), info.AnycastMAC, masterIdx, info.MTU, false)
 	if err != nil {
 		return nil, err
@@ -154,7 +132,7 @@ func (n *Manager) setupBridge(info *Layer2Information, masterIdx int) (*netlink.
 	return bridge, nil
 }
 
-func (n *Manager) setupVXLAN(info *Layer2Information, bridge *netlink.Bridge) error {
+func (n *Manager) SetupVXLAN(info *Layer2Information, bridge *netlink.Bridge) error {
 	neighSuppression := os.Getenv("NWOP_NEIGH_SUPPRESSION") == "true"
 	if len(info.AnycastGateways) == 0 {
 		neighSuppression = false
@@ -382,7 +360,7 @@ func (n *Manager) isL2VNIreattachRequired(current, desired *Layer2Information) (
 			if err != nil {
 				return shouldReattachL2VNI, fmt.Errorf("error while getting L3 by name: %w", err)
 			}
-			if err := n.toolkit.LinkSetMasterByIndex(current.bridge, l3Info.vrfID); err != nil {
+			if err := n.toolkit.LinkSetMasterByIndex(current.bridge, l3Info.VrfID); err != nil {
 				return shouldReattachL2VNI, fmt.Errorf("error while setting master by index: %w", err)
 			}
 		} else {
@@ -509,4 +487,19 @@ func (n *Manager) GetBridgeID(info *Layer2Information) (int, error) {
 		return -1, fmt.Errorf("error while getting link by name: %w", err)
 	}
 	return link.Attrs().Index, nil
+}
+
+func (n *Manager) CreateVlan(name string, parentIndex, masterIndex int) error {
+	la := netlink.NewLinkAttrs()
+	la.Name = name
+	la.ParentIndex = parentIndex
+	la.MasterIndex = masterIndex
+	vlan := &netlink.Vlan{
+		LinkAttrs: la,
+	}
+	err := n.toolkit.LinkAdd(vlan)
+	if err != nil {
+		return fmt.Errorf("error adding link: %w", err)
+	}
+	return nil
 }

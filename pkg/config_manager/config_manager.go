@@ -117,6 +117,7 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 			}
 			err = cm.deployConfigs(ctx)
 			if err != nil {
+				cm.logger.Error(err, "error deploying config")
 				if err := cm.restoreBackup(ctx); err != nil {
 					cm.logger.Error(err, "error restoring backup")
 				}

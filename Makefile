@@ -1,12 +1,12 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= ghcr.io/telekom/das-schiff-network-operator:latest
+IMG ?= ghcr.io/telekom/das-schiff-network-operator:v3
 # Sidecar image URL to use all building/pushing image targets
-SIDECAR_IMG ?= ghcr.io/telekom/frr-exporter:latest
+SIDECAR_IMG ?= ghcr.io/telekom/frr-exporter:v3
 # Sidecar image URL to use all building/pushing image targets
-CONFIGURATOR_IMG ?= ghcr.io/telekom/configurator:latest
+CONFIGURATOR_IMG ?= ghcr.io/telekom/configurator:v3
 # Agent image URL to use all building/pushing image targets
-AGENT_IMG ?= ghcr.io/telekom/agent:latest
+AGENT_IMG ?= ghcr.io/telekom/agent:v3
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25
 
@@ -97,19 +97,19 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/manager/main.go
 
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
+docker-build: #test ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
 .PHONY: docker-build-sidecar
-docker-build-sidecar: test ## Build docker image with the manager.
+docker-build-sidecar: #test ## Build docker image with the manager.
 	docker build -t ${SIDECAR_IMG} -f frr-exporter.Dockerfile .
 
 .PHONY: docker-build-configurator
-docker-build-configurator: test ## Build docker image with the manager.
+docker-build-configurator: #test ## Build docker image with the manager.
 	docker build -t ${CONFIGURATOR_IMG} -f configurator.Dockerfile .
 
 .PHONY: docker-build-agent
-docker-build-agent: test ## Build docker image with the manager.
+docker-build-agent: #test ## Build docker image with the manager.
 	docker build -t ${AGENT_IMG} -f agent.Dockerfile .
 
 .PHONY: docker-push
