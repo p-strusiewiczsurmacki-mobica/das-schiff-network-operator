@@ -14,6 +14,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - network.schiff.telekom.de
   resources:
   - layer2networkconfigurations
@@ -35,6 +43,42 @@ rules:
   - network.schiff.telekom.de
   resources:
   - layer2networkconfigurations/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodeconfigprocesses
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodeconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodeconfigs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodeconfigs/status
   verbs:
   - get
   - patch
