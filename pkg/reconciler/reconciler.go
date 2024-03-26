@@ -301,6 +301,22 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		}
 	}
 
+	for name := range newConfigs {
+		if _, exists := (*existingConfigs)[name]; exists {
+			err = cr.client.Update(ctx, newConfigs[name])
+			if err != nil {
+				cr.logger.Error(err, "error updateing NodeConfig object")
+				return err
+			}
+		} else {
+			err = cr.client.Create(ctx, newConfigs[name])
+			if err != nil {
+				cr.logger.Error(err, "error creating NodeConfig object")
+				return err
+			}
+		}
+	}
+
 	// for _, l2 := range l2Spec {
 	// 	l2.NodeSelector
 	// }
