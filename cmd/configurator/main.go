@@ -1,5 +1,5 @@
 /*
-Copyright 2022.
+Copyright 2024.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -30,12 +29,10 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	"github.com/telekom/das-schiff-network-operator/pkg/anycast"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/macvlan"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
-	"github.com/telekom/das-schiff-network-operator/pkg/monitoring"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.) //nolint:gci
@@ -44,7 +41,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	//nolint:gci // kubebuilder import
 	//+kubebuilder:scaffold:imports
 )
@@ -59,27 +55,6 @@ func init() {
 
 	utilruntime.Must(networkv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
-}
-
-func initCollectors() error {
-	var err error
-	collector, err := monitoring.NewDasSchiffNetworkOperatorCollector(map[string]bool{})
-	if err != nil {
-		return fmt.Errorf("failed to create collector: %w", err)
-	}
-	setupLog.Info("initialize collectors")
-	collectors := []string{}
-	for c := range collector.Collectors {
-		collectors = append(collectors, c)
-	}
-	sort.Strings(collectors)
-	for index := range collectors {
-		setupLog.Info("registered collector", "collector", collectors[index])
-	}
-	if err := metrics.Registry.Register(collector); err != nil {
-		return fmt.Errorf("failed to register collector: %w", err)
-	}
-	return nil
 }
 
 func main() {
@@ -113,14 +88,6 @@ func main() {
 		options = ctrl.Options{Scheme: scheme}
 	}
 
-	if options.MetricsBindAddress != "0" {
-		err = initCollectors()
-		if err != nil {
-			setupLog.Error(err, "unable to initialize metrics collectors")
-			os.Exit(1)
-		}
-	}
-
 	options.LeaderElection = true
 	options.LeaderElectionID = "configurator"
 
@@ -133,14 +100,12 @@ func main() {
 
 	cfg := &config.Config{}
 
-	anycastTracker := &anycast.Tracker{}
-
 	// if err = (&networkv1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
 	// 	setupLog.Error(err, "unable to create webhook", "webhook", "VRFRouteConfiguration")
 	// 	os.Exit(1)
 	// }
 
-	if err := initComponents(mgr, anycastTracker, cfg); err != nil {
+	if err := initComponents(mgr, cfg); err != nil {
 		setupLog.Error(err, "unable to initialize components")
 		os.Exit(1)
 	}
@@ -157,9 +122,9 @@ func main() {
 	}
 }
 
-func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *config.Config) error {
+func initComponents(mgr manager.Manager, cfg *config.Config) error {
 	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
-	if err := setupReconcilers(mgr, anycastTracker); err != nil {
+	if err := setupReconcilers(mgr); err != nil {
 		return fmt.Errorf("unable to setup reconcilers: %w", err)
 	}
 	//+kubebuilder:scaffold:builder
@@ -174,8 +139,8 @@ func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *c
 	return nil
 }
 
-func setupReconcilers(mgr manager.Manager, anycastTracker *anycast.Tracker) error {
-	r, err := reconciler.NewReconciler(mgr.GetClient(), anycastTracker, mgr.GetLogger())
+func setupReconcilers(mgr manager.Manager) error {
+	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger())
 	if err != nil {
 		return fmt.Errorf("unable to create debounced reconciler: %w", err)
 	}

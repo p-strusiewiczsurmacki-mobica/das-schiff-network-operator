@@ -418,3 +418,25 @@ func copyPrefixItemToFRRItem(n int, item networkv1alpha1.VrfRouteConfigurationPr
 		LE:     item.LE,
 	}, nil
 }
+
+func (r *reconcileConfig) fetchLayer3(ctx context.Context) ([]networkv1alpha1.VRFRouteConfiguration, error) {
+	vrfs := &networkv1alpha1.VRFRouteConfigurationList{}
+	err := r.client.List(ctx, vrfs)
+	if err != nil {
+		r.Logger.Error(err, "error getting list of VRFs from Kubernetes")
+		return nil, fmt.Errorf("error getting list of VRFs from Kubernetes: %w", err)
+	}
+
+	return vrfs.Items, nil
+}
+
+func (r *reconcileConfig) fetchTaas(ctx context.Context) ([]networkv1alpha1.RoutingTable, error) {
+	tables := &networkv1alpha1.RoutingTableList{}
+	err := r.client.List(ctx, tables)
+	if err != nil {
+		r.Logger.Error(err, "error getting list of TaaS from Kubernetes")
+		return nil, fmt.Errorf("error getting list of TaaS from Kubernetes: %w", err)
+	}
+
+	return tables.Items, nil
+}
