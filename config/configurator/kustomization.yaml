@@ -9,7 +9,7 @@ kind: Kustomization
 images:
 - name: configurator
   newName: ghcr.io/telekom/configurator
-  newTag: v7
+  newTag: v15
 - name: controller
   newName: ghcr.io/telekom/configurator
   newTag: v1

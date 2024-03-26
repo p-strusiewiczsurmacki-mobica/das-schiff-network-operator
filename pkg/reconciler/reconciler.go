@@ -203,11 +203,13 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		taasSpec = append(taasSpec, v.Spec)
 	}
 
+	cr.logger.Info("ConfigReconciler - list nodes")
 	nodes, err := cr.ListNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
+	cr.logger.Info("ConfigReconciler - list configs")
 	existingConfigs, err := cr.ListConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing configs: %w", err)
@@ -218,6 +220,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	for name := range *nodes {
 		var c *v1alpha1.NodeConfig
 		if _, exists := (*existingConfigs)[name]; exists {
+			cr.logger.Info("ConfigReconciler - config exists")
 			x := (*existingConfigs)[name]
 			c = &x
 			// c.Spec.Layer2 = l2Spec
@@ -230,6 +233,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			// 	return err
 			// }
 		} else {
+			cr.logger.Info("ConfigReconciler - new config")
 			c = &v1alpha1.NodeConfig{
 				ObjectMeta: v1.ObjectMeta{
 					Name: name,
@@ -248,18 +252,20 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			// 	return err
 			// }
 		}
-		cr.logger.Info("NodeConfig", name, *c)
 		newConfigs[name] = c
 	}
 
+	cr.logger.Info("ConfigReconciler - process layer 2 configs")
 	newL2Config := make(map[string][]*v1alpha1.Layer2NetworkConfigurationSpec)
 
-	for _, l2 := range l2Spec {
-		if l2.NodeSelector != nil {
+	for i := range l2Spec {
+		cr.logger.Info("l2spec", "spec", l2Spec[i])
+		if l2Spec[i].NodeSelector != nil {
+			cr.logger.Info("Node selector is not nil")
 			selector := labels.NewSelector()
 			var reqs labels.Requirements
 
-			for key, value := range l2.NodeSelector.MatchLabels {
+			for key, value := range l2Spec[i].NodeSelector.MatchLabels {
 				requirement, err := labels.NewRequirement(key, selection.Equals, []string{value})
 				if err != nil {
 					cr.logger.Error(err, "error creating MatchLabel requirement")
@@ -268,7 +274,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 				reqs = append(reqs, *requirement)
 			}
 
-			for _, req := range l2.NodeSelector.MatchExpressions {
+			for _, req := range l2Spec[i].NodeSelector.MatchExpressions {
 				lowercaseOperator := selection.Operator(strings.ToLower(string(req.Operator)))
 				requirement, err := labels.NewRequirement(req.Key, lowercaseOperator, req.Values)
 				if err != nil {
@@ -279,36 +285,44 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			}
 			selector = selector.Add(reqs...)
 
+			cr.logger.Info("converted selector", "selector", selector)
+
 			for name := range *nodes {
 				if selector.Matches(labels.Set((*nodes)[name].ObjectMeta.Labels)) {
 					cr.logger.Info("node does match nodeSelector of layer2", "node", name)
-					newL2Config[name] = append(newL2Config[name], &l2)
+					newL2Config[name] = append(newL2Config[name], &l2Spec[i])
 				}
 			}
+
 		} else {
+			cr.logger.Info("IS NIL")
 			for name := range *nodes {
-				newL2Config[name] = append(newL2Config[name], &l2)
+				newL2Config[name] = append(newL2Config[name], &l2Spec[i])
 			}
 		}
 	}
+
+	cr.logger.Info("new L2 config", "map", newL2Config)
 
 	for name := range *nodes {
 		newConfigs[name].Spec.Layer2 = []v1alpha1.Layer2NetworkConfigurationSpec{}
-		for _, v := range newL2Config {
-			for i := range v {
-				newConfigs[name].Spec.Layer2 = append(newConfigs[name].Spec.Layer2, *v[i])
-			}
+		for _, v := range newL2Config[name] {
+			newConfigs[name].Spec.Layer2 = append(newConfigs[name].Spec.Layer2, *v)
 		}
 	}
 
+	cr.logger.Info("ConfigReconciler - API query")
 	for name := range newConfigs {
+		cr.logger.Info("NodeConfig", name, *newConfigs[name])
 		if _, exists := (*existingConfigs)[name]; exists {
+			cr.logger.Info("ConfigReconciler - API query - update")
 			err = cr.client.Update(ctx, newConfigs[name])
 			if err != nil {
 				cr.logger.Error(err, "error updateing NodeConfig object")
 				return err
 			}
 		} else {
+			cr.logger.Info("ConfigReconciler - API query - create")
 			err = cr.client.Create(ctx, newConfigs[name])
 			if err != nil {
 				cr.logger.Error(err, "error creating NodeConfig object")
@@ -317,10 +331,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		}
 	}
 
-	// for _, l2 := range l2Spec {
-	// 	l2.NodeSelector
-	// }
-
+	cr.logger.Info("ConfigReconciler - success")
 	return nil
 }
 

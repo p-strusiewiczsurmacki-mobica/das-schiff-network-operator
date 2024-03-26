@@ -10,25 +10,16 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
-# Build router
-RUN apk add llvm clang linux-headers libbpf-dev musl-dev
-
 # Copy the go source
 COPY cmd/configurator/main.go main.go
 COPY api/ api/
 COPY controllers/ controllers/
 COPY pkg/ pkg/
 
-# Build router
-COPY bpf/ bpf/
-RUN cd pkg/bpf/ && go generate
-
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o configurator main.go
 
 FROM alpine:latest
-
-RUN apk add --no-cache iptables ip6tables
 
 WORKDIR /
 COPY --from=builder /workspace/configurator .
