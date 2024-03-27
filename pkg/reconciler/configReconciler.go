@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
@@ -18,6 +19,8 @@ import (
 
 const (
 	statusProvisioning = "provisioning"
+	statusInvalid      = "invalid"
+	statusProvisioned  = "provisioned"
 )
 
 type ConfigReconciler struct {
@@ -47,30 +50,30 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger) (*Conf
 }
 
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
-	cr.logger.Info("ConfigReconciler - reconcileDebounced")
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
 		Logger:           cr.logger,
 	}
 
-	cr.logger.Info("ConfigReconciler - fetchLayer3")
+	// get VRFRouteConfiguration objects
 	l3vnis, err := r.fetchLayer3(ctx)
 	if err != nil {
 		return err
 	}
 
-	cr.logger.Info("ConfigReconciler - fetchLayer2")
+	// get Layer2networkConfigurationObjects objects
 	l2vnis, err := r.fetchLayer2(ctx)
 	if err != nil {
 		return err
 	}
 
-	cr.logger.Info("ConfigReconciler - fetchTass")
+	// get RoutingTable objects
 	taas, err := r.fetchTaas(ctx)
 	if err != nil {
 		return err
 	}
 
+	// discard metadata from previously fetched objects
 	l2Spec := []v1alpha1.Layer2NetworkConfigurationSpec{}
 	for _, v := range l2vnis {
 		l2Spec = append(l2Spec, v.Spec)
@@ -86,62 +89,60 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		taasSpec = append(taasSpec, v.Spec)
 	}
 
-	cr.logger.Info("ConfigReconciler - list nodes")
+	// list all nodes in the cluster
 	nodes, err := cr.ListNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	cr.logger.Info("ConfigReconciler - list configs")
+	// list all NodeConfigs that were already deployed
 	existingConfigs, err := cr.ListConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing configs: %w", err)
 	}
 
+	// prepare map of NewConfigs (hostname is a map's key)
+	// we simply add l3Spec and taasSpec to *all* configs, as
+	// VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
+	// are global respources (no node selctors are implemented) (Am I correct here?)
 	newConfigs := map[string]*v1alpha1.NodeConfig{}
-
 	for name := range *nodes {
 		var c *v1alpha1.NodeConfig
 		if _, exists := (*existingConfigs)[name]; exists {
+			// config already exist - update (is this safe? Won't there be any leftovers in the config?)
 			cr.logger.Info("ConfigReconciler - config exists")
 			x := (*existingConfigs)[name]
 			c = &x
-			// c.Spec.Layer2 = l2Spec
 			c.Spec.Vrf = l3Spec
 			c.Spec.RoutingTable = taasSpec
-
-			// err = cr.client.Update(ctx, c)
-			// if err != nil {
-			// 	cr.logger.Error(err, "error updateing NodeConfig object")
-			// 	return err
-			// }
 		} else {
+			// config does not exist - create new
 			cr.logger.Info("ConfigReconciler - new config")
 			c = &v1alpha1.NodeConfig{
 				ObjectMeta: v1.ObjectMeta{
 					Name: name,
 				},
 				Spec: v1alpha1.NodeConfigSpec{
-					// Layer2:       l2Spec,
 					Vrf:          l3Spec,
 					RoutingTable: taasSpec,
 				}}
-			// err = cr.client.Create(ctx, c)
-			// if err != nil {
-			// 	cr.logger.Error(err, "error creating NodeConfig object")
-			// 	return err
-			// }
 		}
 		newConfigs[name] = c
 	}
 
-	cr.logger.Info("ConfigReconciler - process layer 2 configs")
+	// prepare Layer2NetworkConfigurationSpec (l2Spec) for each node.
+	// Each Layer2NetworkConfigurationSpec from l2Spec has node selector,
+	// which should be used to add config to proper nodes.
+	// newL2Config map is created, which holds Layer2NetworkConfigurationSpec
+	// and can be accessed by key (hostname)
 	newL2Config := make(map[string][]*v1alpha1.Layer2NetworkConfigurationSpec)
-
 	for i := range l2Spec {
-		cr.logger.Info("l2spec", "spec", l2Spec[i])
 		if l2Spec[i].NodeSelector != nil {
-			cr.logger.Info("Node selector is not nil")
+			// node selector is defined for the spec.
+			cr.logger.Info("ConfigReconciler - processing node selector")
+
+			// node selector of type v1.labelSelector has to be converted
+			// to labels.Selector type to be used with controller-runtime client
 			selector := labels.NewSelector()
 			var reqs labels.Requirements
 
@@ -165,17 +166,15 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			}
 			selector = selector.Add(reqs...)
 
-			cr.logger.Info("converted selector", "selector", selector)
-
+			// add currently processed Layer2NetworkConfigurationSpec to each node that matches the selector
 			for name := range *nodes {
 				if selector.Matches(labels.Set((*nodes)[name].ObjectMeta.Labels)) {
 					cr.logger.Info("node does match nodeSelector of layer2", "node", name)
 					newL2Config[name] = append(newL2Config[name], &l2Spec[i])
 				}
 			}
-
 		} else {
-			cr.logger.Info("IS NIL")
+			// selector is not defined - all nodes should have currently processed Layer2NetworkConfigurationSpec
 			for name := range *nodes {
 				newL2Config[name] = append(newL2Config[name], &l2Spec[i])
 			}
@@ -184,6 +183,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 
 	cr.logger.Info("new L2 config", "map", newL2Config)
 
+	// add Layer2NetworkConfigurationSpec saved in newL2Config to respective NodeConfigs objects
 	for name := range *nodes {
 		newConfigs[name].Spec.Layer2 = []v1alpha1.Layer2NetworkConfigurationSpec{}
 		for _, v := range newL2Config[name] {
@@ -192,10 +192,16 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	cr.logger.Info("ConfigReconciler - API query")
+	// process new NodeConfigs one by one
 	for name := range newConfigs {
 		cr.logger.Info("NodeConfig", name, *newConfigs[name])
 		if _, exists := (*existingConfigs)[name]; exists {
+			// config already exists - update
 			cr.logger.Info("ConfigReconciler - API query - update")
+
+			// TODO: Before update we should compare new config with previous config to check
+			// if it should be provisioned
+
 			err = cr.client.Update(ctx, newConfigs[name])
 			if err != nil {
 				cr.logger.Error(err, "error updating NodeConfig object")
@@ -203,18 +209,18 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			}
 		} else {
 			cr.logger.Info("ConfigReconciler - API query - create")
+			// config does not exist - create
 			err = cr.client.Create(ctx, newConfigs[name])
 			if err != nil {
 				cr.logger.Error(err, "error creating NodeConfig object")
 				return err
 			}
 		}
-		err = cr.client.Status().Update(ctx, newConfigs[name])
-		if err != nil {
-			cr.logger.Error(err, "error creating NodeConfig status")
-			return err
-		}
 
+		// give APIServer a few seconds to process the update.
+		time.Sleep(5 * time.Second)
+
+		// get current instance from APIserver so we can update the status field
 		instance := &v1alpha1.NodeConfig{}
 		err := cr.client.Get(ctx, types.NamespacedName{Name: newConfigs[name].Name, Namespace: newConfigs[name].Namespace}, instance)
 		if err != nil {
@@ -222,12 +228,15 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			return err
 		}
 
+		// update the status with statusProvisioning
 		instance.Status.ConfigStatus = statusProvisioning
 		err = cr.client.Status().Update(ctx, instance)
 		if err != nil {
 			cr.logger.Error(err, "error creating NodeConfig status")
 			return err
 		}
+
+		// TODO: wait for the node to update the status to 'provisioned' or 'invalid'
 	}
 
 	cr.logger.Info("ConfigReconciler - success")
@@ -235,14 +244,14 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 }
 
 func (cr *ConfigReconciler) ListNodes(ctx context.Context) (*map[string]corev1.Node, error) {
+	// list all nodes
 	list := &corev1.NodeList{}
-
 	if err := cr.client.List(ctx, list); err != nil {
 		return nil, err
 	}
 
+	// discard control-plane nodes and create map of nodes
 	nodes := make(map[string]corev1.Node)
-
 	for i := range list.Items {
 		if _, exists := list.Items[i].Labels["node-role.kubernetes.io/control-plane"]; !exists {
 			nodes[list.Items[i].Name] = list.Items[i]
@@ -253,13 +262,14 @@ func (cr *ConfigReconciler) ListNodes(ctx context.Context) (*map[string]corev1.N
 }
 
 func (cr *ConfigReconciler) ListConfigs(ctx context.Context) (*map[string]v1alpha1.NodeConfig, error) {
+	// list all node configs
 	list := &v1alpha1.NodeConfigList{}
 	if err := cr.client.List(ctx, list); err != nil {
 		return nil, err
 	}
 
+	// create map of node configs
 	configs := make(map[string]v1alpha1.NodeConfig)
-
 	for i := range list.Items {
 		configs[list.Items[i].Name] = list.Items[i]
 	}

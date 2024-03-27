@@ -29,7 +29,6 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/macvlan"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
@@ -91,6 +90,9 @@ func main() {
 	options.LeaderElection = true
 	options.LeaderElectionID = "configurator"
 
+	// turn off metrics server
+	options.MetricsBindAddress = "0"
+
 	clientConfig := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(clientConfig, options)
 	if err != nil {
@@ -98,14 +100,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg := &config.Config{}
-
 	// if err = (&networkv1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
 	// 	setupLog.Error(err, "unable to create webhook", "webhook", "VRFRouteConfiguration")
 	// 	os.Exit(1)
 	// }
 
-	if err := initComponents(mgr, cfg); err != nil {
+	if err := initComponents(mgr); err != nil {
 		setupLog.Error(err, "unable to initialize components")
 		os.Exit(1)
 	}
@@ -122,7 +122,7 @@ func main() {
 	}
 }
 
-func initComponents(mgr manager.Manager, cfg *config.Config) error {
+func initComponents(mgr manager.Manager) error {
 	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
 	if err := setupReconcilers(mgr); err != nil {
 		return fmt.Errorf("unable to setup reconcilers: %w", err)
