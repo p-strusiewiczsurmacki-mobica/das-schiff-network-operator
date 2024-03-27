@@ -27,12 +27,13 @@ type NodeConfigSpec struct {
 
 // NodeConfigStatus defines the observed state of NodeConfig.
 type NodeConfigStatus struct {
-	Status string `json:"status"`
+	ConfigStatus string `json:"configStatus"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=nc,scope=Cluster
+//+kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.configStatus`
 
 // NodeConfig is the Schema for the node configuration.
 type NodeConfig struct {

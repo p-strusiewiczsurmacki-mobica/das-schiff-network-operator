@@ -16,7 +16,11 @@ spec:
     singular: nodeconfig
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.configStatus
+      name: Status
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: NodeConfig is the Schema for the node configuration.
@@ -248,10 +252,10 @@ spec:
           status:
             description: NodeConfigStatus defines the observed state of NodeConfig.
             properties:
-              status:
+              configStatus:
                 type: string
             required:
-            - status
+            - configStatus
             type: object
         type: object
     served: true
