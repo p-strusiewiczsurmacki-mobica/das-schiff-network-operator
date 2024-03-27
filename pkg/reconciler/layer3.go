@@ -20,39 +20,13 @@ import (
 const defaultSleep = 2 * time.Second
 
 func (r *reconcile) fetchNodeConfig(ctx context.Context) (*networkv1alpha1.NodeConfig, error) {
-	config := &networkv1alpha1.NodeConfig{}
-	err := r.client.Get(ctx, types.NamespacedName{Name: os.Getenv(healthcheck.NodenameEnv)}, config)
+	cfg := &networkv1alpha1.NodeConfig{}
+	err := r.client.Get(ctx, types.NamespacedName{Name: os.Getenv(healthcheck.NodenameEnv)}, cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting NodeConfig: %w", err)
 	}
-	return config, nil
+	return cfg, nil
 }
-
-// func (r *reconcile) fetchLayer3(ctx context.Context) ([]networkv1alpha1.VRFRouteConfiguration, error) {
-// 	vrfs := &networkv1alpha1.VRFRouteConfigurationList{}
-// 	err := r.client.List(ctx, vrfs)
-// 	if err != nil {
-// 		r.Logger.Error(err, "error getting list of VRFs from Kubernetes")
-// 		return nil, fmt.Errorf("error getting list of VRFs from Kubernetes: %w", err)
-// 	}
-
-// 	return vrfs.Items, nil
-// }
-
-// func (r *reconcile) getLayer3(ctx context.Context, config *networkv1alpha1.NodeConfig) ([]networkv1alpha1.VRFRouteConfigurationSpec, error) {
-// 	return config.Spec.Vrf, nil
-// }
-
-// func (r *reconcile) fetchTaas(ctx context.Context) ([]networkv1alpha1.RoutingTable, error) {
-// 	tables := &networkv1alpha1.RoutingTableList{}
-// 	err := r.client.List(ctx, tables)
-// 	if err != nil {
-// 		r.Logger.Error(err, "error getting list of TaaS from Kubernetes")
-// 		return nil, fmt.Errorf("error getting list of TaaS from Kubernetes: %w", err)
-// 	}
-
-// 	return tables.Items, nil
-// }
 
 // nolint: contextcheck // context is not relevant
 func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurationSpec, taas []networkv1alpha1.RoutingTableSpec) error {
@@ -111,16 +85,16 @@ func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurati
 }
 
 func (r *reconcile) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice bool) error {
-	// changed, err := r.frrManager.Configure(frr.Configuration{
-	// 	VRFs: vrfConfigs,
-	// 	ASN:  r.config.ServerASN,
-	// })
-	// if err != nil {
-	// 	r.Logger.Error(err, "error updating FRR configuration")
-	// 	return fmt.Errorf("error updating FRR configuration: %w", err)
-	// }
+	changed, err := r.frrManager.Configure(frr.Configuration{
+		VRFs: vrfConfigs,
+		ASN:  r.config.ServerASN,
+	})
+	if err != nil {
+		r.Logger.Error(err, "error updating FRR configuration")
+		return fmt.Errorf("error updating FRR configuration: %w", err)
+	}
 
-	if r.dirtyFRRConfig {
+	if changed || r.dirtyFRRConfig {
 		err := r.reloadFRR()
 		if err != nil {
 			r.dirtyFRRConfig = true

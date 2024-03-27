@@ -18,7 +18,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -29,7 +28,6 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/macvlan"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
@@ -100,11 +98,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// if err = (&networkv1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
-	// 	setupLog.Error(err, "unable to create webhook", "webhook", "VRFRouteConfiguration")
-	// 	os.Exit(1)
-	// }
-
 	if err := initComponents(mgr); err != nil {
 		setupLog.Error(err, "unable to initialize components")
 		os.Exit(1)
@@ -128,13 +121,6 @@ func initComponents(mgr manager.Manager) error {
 		return fmt.Errorf("unable to setup reconcilers: %w", err)
 	}
 	//+kubebuilder:scaffold:builder
-
-	// if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-	// 	return fmt.Errorf("unable to set up health check: %w", err)
-	// }
-	// if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-	// 	return fmt.Errorf("unable to set up ready check: %w", err)
-	// }
 
 	return nil
 }
@@ -169,18 +155,5 @@ func setupReconcilers(mgr manager.Manager) error {
 		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
-	return nil
-}
-
-func performNetworkingHealthcheck(hc *healthcheck.HealthChecker) error {
-	if err := hc.CheckInterfaces(); err != nil {
-		return fmt.Errorf("error checking network interfaces: %w", err)
-	}
-	if err := hc.CheckReachability(); err != nil {
-		return fmt.Errorf("error checking network reachability: %w", err)
-	}
-	if err := hc.RemoveTaints(context.Background()); err != nil {
-		return fmt.Errorf("error removing taint: %w", err)
-	}
 	return nil
 }

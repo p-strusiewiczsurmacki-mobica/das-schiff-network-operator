@@ -21,6 +21,7 @@ import (
 const (
 	defaultDebounceTime = 20 * time.Second
 	nodeConfigPath      = "/opt/network-operator/nodeConfig.yaml"
+	nodeConfigFilePerm  = 0o600
 )
 
 type Reconciler struct {
@@ -99,49 +100,49 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 
 	r.Logger.Info("fetching NodeConfig")
 	// get NodeConfig from apiserver
-	config, err := r.fetchNodeConfig(ctx)
+	cfg, err := r.fetchNodeConfig(ctx)
 	if err != nil {
 		return err
 	}
 
-	r.Logger.Info("NodeConfig status", "status", config.Status.ConfigStatus)
+	r.Logger.Info("NodeConfig status", "status", cfg.Status.ConfigStatus)
 
 	// config is invalid or was already provisioned - discard
-	if config.Status.ConfigStatus == statusInvalid || config.Status.ConfigStatus == statusProvisioned {
-		r.Logger.Info("NodeConfig discarded with", "status", config.Status.ConfigStatus)
+	if cfg.Status.ConfigStatus == statusInvalid || cfg.Status.ConfigStatus == statusProvisioned {
+		r.Logger.Info("NodeConfig discarded with", "status", cfg.Status.ConfigStatus)
 		return nil
 	}
 
 	// reconcile config
-	if err = reconciler.reconcile(r, config); err != nil {
+	if err = doReconciliation(r, cfg); err != nil {
 		r.Logger.Info("reconcile failed")
 		// if reconciliation failed set NodeConfig's status as invalid
-		config.Status.ConfigStatus = statusInvalid
-		if err := r.client.Status().Update(ctx, config); err != nil {
+		cfg.Status.ConfigStatus = statusInvalid
+		if err := r.client.Status().Update(ctx, cfg); err != nil {
 			return fmt.Errorf("error updating NodeConfig status: %w", err)
 		}
 
 		// try to restore previously known good NodeConfig
-		if err := reconciler.restoreNodeConfig(r); err != nil {
+		if err := restoreNodeConfig(r); err != nil {
 			return fmt.Errorf("error restoring NodeConfig: %w", err)
 		}
 
 		return fmt.Errorf("reconciler error: %w", err)
 	}
 
-	r.Logger.Info("reconcile successfull")
+	r.Logger.Info("reconcile successful")
 
 	// check if node is healthly after reconciliation
 	if err := reconciler.checkHealth(ctx); err != nil {
 		r.logger.Error(err, "checkHealth failed")
 		// if node is not healthly set NodeConfig's status as invalid
-		config.Status.ConfigStatus = statusInvalid
-		if err = r.client.Status().Update(ctx, config); err != nil {
+		cfg.Status.ConfigStatus = statusInvalid
+		if err = r.client.Status().Update(ctx, cfg); err != nil {
 			return fmt.Errorf("error updating NodeConfig status: %w", err)
 		}
 
 		// try to restore previously known good NodeConfig
-		if err = reconciler.restoreNodeConfig(r); err != nil {
+		if err = restoreNodeConfig(r); err != nil {
 			return fmt.Errorf("error restoring NodeConfig: %w", err)
 		}
 
@@ -152,20 +153,20 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 
 	// set config status as provisioned (valid)
 	r.Logger.Info("will set NodeConfig status to provisioned")
-	config.Status.ConfigStatus = statusProvisioned
-	if err = r.client.Status().Update(ctx, config); err != nil {
+	cfg.Status.ConfigStatus = statusProvisioned
+	if err = r.client.Status().Update(ctx, cfg); err != nil {
 		r.Logger.Info("failed set NodeConfig status to provisioned")
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
 	r.Logger.Info("will save config to file")
 	// save working config
-	c, err := json.Marshal(*config)
+	c, err := json.Marshal(*cfg)
 	if err != nil {
 		panic(err)
 	}
 
-	if err = os.WriteFile(nodeConfigPath, c, 0644); err != nil {
+	if err = os.WriteFile(nodeConfigPath, c, nodeConfigFilePerm); err != nil {
 		return fmt.Errorf("error saving NodeConfig status: %w", err)
 	}
 
@@ -174,11 +175,11 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (reconciler *Reconciler) reconcile(r *reconcile, config *v1alpha1.NodeConfig) error {
-	r.logger.Info("config to reconcile", "NodeConfig", *config)
-	l3vnis := config.Spec.Vrf
-	l2vnis := config.Spec.Layer2
-	taas := config.Spec.RoutingTable
+func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
+	r.logger.Info("config to reconcile", "NodeConfig", *nodeCfg)
+	l3vnis := nodeCfg.Spec.Vrf
+	l2vnis := nodeCfg.Spec.Layer2
+	taas := nodeCfg.Spec.RoutingTable
 
 	if err := r.reconcileLayer3(l3vnis, taas); err != nil {
 		return err
@@ -190,18 +191,18 @@ func (reconciler *Reconciler) reconcile(r *reconcile, config *v1alpha1.NodeConfi
 	return nil
 }
 
-func (reconciler *Reconciler) restoreNodeConfig(r *reconcile) error {
+func restoreNodeConfig(r *reconcile) error {
 	cfg, err := os.ReadFile(nodeConfigPath)
 	if err != nil {
 		return fmt.Errorf("error reading NodeConfig: %w", err)
 	}
 
-	config := &v1alpha1.NodeConfig{}
-	if err := json.Unmarshal(cfg, config); err != nil {
+	nodeCfg := &v1alpha1.NodeConfig{}
+	if err := json.Unmarshal(cfg, nodeCfg); err != nil {
 		return fmt.Errorf("error unmarshalling NodeConfig: %w", err)
 	}
 
-	if err = reconciler.reconcile(r, config); err != nil {
+	if err = doReconciliation(r, nodeCfg); err != nil {
 		return fmt.Errorf("error restroing configuration: %w", err)
 	}
 
@@ -209,10 +210,10 @@ func (reconciler *Reconciler) restoreNodeConfig(r *reconcile) error {
 }
 
 func (reconciler *Reconciler) checkHealth(ctx context.Context) error {
-	// _, err := reconciler.healthChecker.IsFRRActive()
-	// if err != nil {
-	// 	return fmt.Errorf("error checking FRR status: %w", err)
-	// }
+	_, err := reconciler.healthChecker.IsFRRActive()
+	if err != nil {
+		return fmt.Errorf("error checking FRR status: %w", err)
+	}
 	if err := reconciler.healthChecker.CheckInterfaces(); err != nil {
 		return fmt.Errorf("error checking network interfaces: %w", err)
 	}
