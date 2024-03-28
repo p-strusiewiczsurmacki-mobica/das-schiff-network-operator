@@ -132,6 +132,9 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		newConfigs[name] = c
 	}
 
+	cr.logger.Info("existing configs", "configs", existingConfigs)
+	cr.logger.Info("new configs", "configs", newConfigs)
+
 	// prepare Layer2NetworkConfigurationSpec (l2Spec) for each node.
 	// Each Layer2NetworkConfigurationSpec from l2Spec has node selector,
 	// which should be used to add config to proper nodes.
@@ -201,8 +204,14 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			// config already exists - update
 			cr.logger.Info("ConfigReconciler - API query - update")
 
-			// TODO: Before update we should compare new config with previous config to check
-			// if it should be provisioned
+			// check if new config is equal to existing config
+			// if so, skip the update as nothing has to be updated
+			if newConfigs[name].IsEqual(existingConfigs[name]) {
+				cr.logger.Info("ConfigReconciler - configs are equal")
+				continue
+			}
+
+			cr.logger.Info("ConfigReconciler - configs are not equal - provisoning will start")
 
 			err = cr.client.Update(ctx, newConfigs[name])
 			if err != nil {
@@ -238,7 +247,21 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 			return fmt.Errorf("error creating NodeConfig status: %w", err)
 		}
 
-		// TODO: wait for the node to update the status to 'provisioned' or 'invalid'
+		// wait for the node to update the status to 'provisioned' or 'invalid'
+		ctxTimeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		errCh := make(chan error)
+
+		go cr.WaitForConfig(ctxTimeout, instance, errCh)
+
+		select {
+		case <-ctxTimeout.Done():
+			return fmt.Errorf("unable to verify NodeConfig - context cancelled: %w", ctxTimeout.Err())
+		case result := <-errCh:
+			if result != nil {
+				return fmt.Errorf("error waiting for Node config: %w", result)
+			}
+		}
 	}
 
 	cr.logger.Info("ConfigReconciler - success")
@@ -277,4 +300,22 @@ func (cr *ConfigReconciler) ListConfigs(ctx context.Context) (map[string]v1alpha
 	}
 
 	return configs, nil
+}
+
+func (cr *ConfigReconciler) WaitForConfig(ctx context.Context, instance *v1alpha1.NodeConfig, errCh chan error) {
+	for {
+		err := cr.client.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, instance)
+		if err == nil {
+			if instance.Status.ConfigStatus == statusProvisioned {
+				errCh <- nil
+				return
+			}
+			if instance.Status.ConfigStatus == statusInvalid {
+				errCh <- fmt.Errorf("error creating NodeConfig - node %s reported state as invalid", instance.Name)
+				return
+			}
+		}
+		cr.logger.Info("waiting for config...")
+		time.Sleep(time.Millisecond * 100)
+	}
 }

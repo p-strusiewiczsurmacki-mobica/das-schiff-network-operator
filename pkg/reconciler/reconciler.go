@@ -159,7 +159,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
-	r.Logger.Info("will save config to file")
+	r.Logger.Info("will save config to a file")
 	// save working config
 	c, err := json.Marshal(*cfg)
 	if err != nil {

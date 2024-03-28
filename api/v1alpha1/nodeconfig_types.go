@@ -16,7 +16,11 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	"reflect"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // NodeConfigSpec defines the desired state of NodeConfig.
 type NodeConfigSpec struct {
@@ -51,6 +55,10 @@ type NodeConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []NodeConfig `json:"items"`
+}
+
+func (nc NodeConfig) IsEqual(c NodeConfig) bool {
+	return reflect.DeepEqual(nc.Spec.Layer2, c.Spec.Layer2) && reflect.DeepEqual(nc.Spec.Vrf, c.Spec.Vrf) && reflect.DeepEqual(nc.Spec.RoutingTable, c.Spec.RoutingTable)
 }
 
 func init() {
