@@ -146,7 +146,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 			return fmt.Errorf("error restoring NodeConfig: %w", err)
 		}
 
-		return fmt.Errorf("healthcheck error: %w", err)
+		return fmt.Errorf("healthcheck error (previous config restored): %w", err)
 	}
 
 	r.Logger.Info("checkHealth succeeded")
@@ -161,7 +161,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 
 	r.Logger.Info("will save config to a file")
 	// save working config
-	c, err := json.Marshal(*cfg)
+	c, err := json.MarshalIndent(*cfg, "", " ")
 	if err != nil {
 		panic(err)
 	}
@@ -192,19 +192,26 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 }
 
 func restoreNodeConfig(r *reconcile) error {
+	r.logger.Info("restoring config")
+	// config could be stored in memory and be read only on startup
+	r.logger.Info("reading data")
 	cfg, err := os.ReadFile(nodeConfigPath)
 	if err != nil {
 		return fmt.Errorf("error reading NodeConfig: %w", err)
 	}
 
+	r.logger.Info("unmarshalling data")
 	nodeCfg := &v1alpha1.NodeConfig{}
 	if err := json.Unmarshal(cfg, nodeCfg); err != nil {
 		return fmt.Errorf("error unmarshalling NodeConfig: %w", err)
 	}
 
+	r.logger.Info("doReconciliation")
 	if err = doReconciliation(r, nodeCfg); err != nil {
 		return fmt.Errorf("error restroing configuration: %w", err)
 	}
+
+	r.logger.Info("config restored")
 
 	return nil
 }
