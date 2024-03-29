@@ -93,73 +93,49 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 		Logger:     reconciler.logger,
 	}
 
-	r.Logger.Info("reloading config")
 	if err := r.config.ReloadConfig(); err != nil {
 		return fmt.Errorf("error reloading network-operator config: %w", err)
 	}
 
-	r.Logger.Info("fetching NodeConfig")
 	// get NodeConfig from apiserver
 	cfg, err := r.fetchNodeConfig(ctx)
 	if err != nil {
 		return err
 	}
 
-	r.Logger.Info("NodeConfig status", "status", cfg.Status.ConfigStatus)
-
 	// config is invalid or was already provisioned - discard
 	if cfg.Status.ConfigStatus != statusProvisioning {
-		r.Logger.Info("NodeConfig discarded with", "status", cfg.Status.ConfigStatus)
+		r.Logger.Info("NodeConfig discarded", "status", cfg.Status.ConfigStatus)
 		return nil
 	}
 
 	// reconcile config
 	if err = doReconciliation(r, cfg); err != nil {
-		r.Logger.Info("reconcile failed")
-		// if reconciliation failed set NodeConfig's status as invalid
-		cfg.Status.ConfigStatus = statusInvalid
-		if err := r.client.Status().Update(ctx, cfg); err != nil {
-			return fmt.Errorf("error updating NodeConfig status: %w", err)
-		}
-
-		// try to restore previously known good NodeConfig
-		if err := restoreNodeConfig(r); err != nil {
-			return fmt.Errorf("error restoring NodeConfig: %w", err)
+		// if reconciliation failed set NodeConfig's status as invalid and restore last known working config
+		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
+			return fmt.Errorf("reconciler restoring config: %w", err)
 		}
 
 		return fmt.Errorf("reconciler error: %w", err)
 	}
 
-	r.Logger.Info("reconcile successful")
-
 	// check if node is healthly after reconciliation
 	if err := reconciler.checkHealth(ctx); err != nil {
-		r.logger.Error(err, "checkHealth failed")
-		// if node is not healthly set NodeConfig's status as invalid
-		cfg.Status.ConfigStatus = statusInvalid
-		if err = r.client.Status().Update(ctx, cfg); err != nil {
-			return fmt.Errorf("error updating NodeConfig status: %w", err)
-		}
-
-		// try to restore previously known good NodeConfig
-		if err = restoreNodeConfig(r); err != nil {
-			return fmt.Errorf("error restoring NodeConfig: %w", err)
+		// if node is not healthly set NodeConfig's status as invalid and restore last known working config
+		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
+			return fmt.Errorf("reconciler restoring config: %w", err)
 		}
 
 		return fmt.Errorf("healthcheck error (previous config restored): %w", err)
 	}
 
-	r.Logger.Info("checkHealth succeeded")
-
 	// set config status as provisioned (valid)
-	r.Logger.Info("will set NodeConfig status to provisioned")
 	cfg.Status.ConfigStatus = statusProvisioned
 	if err = r.client.Status().Update(ctx, cfg); err != nil {
 		r.Logger.Info("failed set NodeConfig status to provisioned")
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
-	r.Logger.Info("will save config to a file")
 	// save working config
 	c, err := json.MarshalIndent(*cfg, "", " ")
 	if err != nil {
@@ -170,7 +146,19 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error saving NodeConfig status: %w", err)
 	}
 
-	r.Logger.Info("config stored")
+	return nil
+}
+
+func (r *reconcile) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeConfig) error {
+	cfg.Status.ConfigStatus = statusInvalid
+	if err := r.client.Status().Update(ctx, cfg); err != nil {
+		return fmt.Errorf("error updating NodeConfig status: %w", err)
+	}
+
+	// try to restore previously known good NodeConfig
+	if err := restoreNodeConfig(r); err != nil {
+		return fmt.Errorf("error restoring NodeConfig: %w", err)
+	}
 
 	return nil
 }

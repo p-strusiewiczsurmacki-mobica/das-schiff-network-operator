@@ -57,7 +57,7 @@ type NodeConfigList struct {
 	Items           []NodeConfig `json:"items"`
 }
 
-func (nc NodeConfig) IsEqual(c NodeConfig) bool {
+func (nc *NodeConfig) IsEqual(c *NodeConfig) bool {
 	return reflect.DeepEqual(nc.Spec.Layer2, c.Spec.Layer2) && reflect.DeepEqual(nc.Spec.Vrf, c.Spec.Vrf) && reflect.DeepEqual(nc.Spec.RoutingTable, c.Spec.RoutingTable)
 }
 
