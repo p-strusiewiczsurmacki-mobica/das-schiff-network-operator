@@ -22,6 +22,7 @@ const (
 	statusInvalid      = "invalid"
 	statusProvisioned  = "provisioned"
 
+	// TODO: make those configurable.
 	defaultTimeout      = 60 * time.Second
 	defaultCooldownTime = 100 * time.Millisecond
 )
@@ -75,8 +76,6 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing configs: %w", err)
 	}
 
-	cr.logger.Info("existing configs", "configs", existingConfigs)
-
 	// prepare map of NewConfigs (hostname is a map's key)
 	// we simply add l3Spec and taasSpec to *all* configs, as
 	// VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
@@ -86,17 +85,14 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error preparing configs for nodes: %w", err)
 	}
 
-	cr.logger.Info("new configs", "configs", newConfigs)
-
-	cr.logger.Info("ConfigReconciler - API query")
 	// process new NodeConfigs one by one
+	// TODO: allow to deploy on n nodes at the same time, configurable
 	for name := range newConfigs {
 		if err := cr.deployConfig(ctx, name, newConfigs, existingConfigs); err != nil {
 			return fmt.Errorf("error deploying config: %w", err)
 		}
 	}
 
-	cr.logger.Info("ConfigReconciler - success")
 	return nil
 }
 
@@ -134,41 +130,24 @@ func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha
 	return configs, nil
 }
 
-func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1alpha1.NodeConfig, expectedStatus string, errCh chan error) {
-	cr.logger.Info("wait for config", "name", instance.Name, "status", expectedStatus)
+func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1alpha1.NodeConfig, expectedStatus string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			cr.logger.Info("Context done")
-			errCh <- fmt.Errorf("error while waiting for NodeConfig - context cancelled: %w", ctx.Err())
-			return
+			return fmt.Errorf("context error: %w", ctx.Err())
 		default:
 			err := cr.client.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, instance)
 			if err == nil {
-				// Accept any status
-				cr.logger.Info("Get error is nil")
-				if expectedStatus == "" {
-					cr.logger.Info("Expecred statsu is empty - return nil error")
-					errCh <- nil
-					return
-				}
-
-				// accept only expected status
-				if instance.Status.ConfigStatus == expectedStatus {
-					cr.logger.Info("Expected statsus is set and fulfilled", "status", expectedStatus)
-					errCh <- nil
-					return
+				// Accept any status ("") or expected status
+				if expectedStatus == "" || instance.Status.ConfigStatus == expectedStatus {
+					return nil
 				}
 
 				// return error if status is invalid
 				if instance.Status.ConfigStatus == statusInvalid {
-					errCh <- fmt.Errorf("error creating NodeConfig - node %s reported state as invalid", instance.Name)
-					return
+					return fmt.Errorf("error creating NodeConfig - node %s reported state as invalid", instance.Name)
 				}
-			} else {
-				cr.logger.Info("Get error", "err", err)
 			}
-			cr.logger.Info("waiting for config...")
 			time.Sleep(defaultCooldownTime)
 		}
 	}
@@ -178,20 +157,11 @@ func (cr *ConfigReconciler) waitForConfig(ctx context.Context, timeout time.Dura
 	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	errCh := make(chan error)
-	go cr.waitForConfigGet(ctxTimeout, config, expectedStatus, errCh)
-
-	result := <-errCh
-	if result != nil {
-		return fmt.Errorf("error waiting for Node config: %w", result)
+	if err := cr.waitForConfigGet(ctxTimeout, config, expectedStatus); err != nil {
+		return fmt.Errorf("error getting config: %w", err)
 	}
 
 	return nil
-}
-
-// removal function that preserves order (is it worth to preserve order?)
-func remove[T any](slice []T, s int) []T {
-	return append(slice[:s], slice[s+1:]...)
 }
 
 func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeConfig, error) {
@@ -318,24 +288,18 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newCo
 	cr.logger.Info("NodeConfig", name, *newConfigs[name])
 	if _, exists := existingConfigs[name]; exists {
 		// config already exists - update
-		cr.logger.Info("ConfigReconciler - API query - update")
 
 		// check if new config is equal to existing config
 		// if so, skip the update as nothing has to be updated
 		existing := existingConfigs[name]
 		if newConfigs[name].IsEqual(&existing) {
-			cr.logger.Info("ConfigReconciler - configs are equal")
 			return nil
 		}
 
-		cr.logger.Info("ConfigReconciler - configs are not equal - provisoning will start")
-
 		if err := cr.client.Update(ctx, newConfigs[name]); err != nil {
-			cr.logger.Error(err, "error updating NodeConfig object")
 			return fmt.Errorf("error updating NodeConfig object: %w", err)
 		}
 	} else {
-		cr.logger.Info("ConfigReconciler - API query - create")
 		// config does not exist - create
 		if err := cr.client.Create(ctx, newConfigs[name]); err != nil {
 			cr.logger.Error(err, "error creating NodeConfig object")
@@ -343,26 +307,35 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newCo
 		}
 	}
 
-	// wait for config te be created
-	// it also gets current instance from APIserver so we can update the status field
-	// // TODO: check if this is required
-	if err := cr.waitForConfig(ctx, defaultTimeout, newConfigs[name], ""); err != nil {
-		return fmt.Errorf("error waiting for NodeConfig: %w", err)
-	}
-
 	// update the status with statusProvisioning
 	newConfigs[name].Status.ConfigStatus = statusProvisioning
 	err := cr.client.Status().Update(ctx, newConfigs[name])
 	if err != nil {
-		cr.logger.Error(err, "error creating NodeConfig status")
 		return fmt.Errorf("error creating NodeConfig status: %w", err)
 	}
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	// wait for config te be created
 	if err := cr.waitForConfig(ctx, defaultTimeout, newConfigs[name], statusProvisioned); err != nil {
+		// if cannot get config status or status is 'provisoning' and request timed out
+		// let's assume that the node died and was unable to invalidate config
+		// so we will do that here
+		if newConfigs[name].Status.ConfigStatus == statusProvisioning {
+			newConfigs[name].Status.ConfigStatus = statusInvalid
+			if err := cr.client.Status().Update(ctx, newConfigs[name]); err != nil {
+				return fmt.Errorf("error invalidating config: %w", err)
+			}
+		}
 		return fmt.Errorf("error waiting for NodeConfig: %w", err)
 	}
 
+	cr.logger.Info("config deployed", "name", name, "status", newConfigs[name].Status.ConfigStatus)
+
 	return nil
+}
+
+// remove element from slice preserving order
+// TODO: is it worth to preserve order?
+func remove[T any](slice []T, s int) []T {
+	return append(slice[:s], slice[s+1:]...)
 }

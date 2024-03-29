@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/frr"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -100,12 +101,15 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	// get NodeConfig from apiserver
 	cfg, err := r.fetchNodeConfig(ctx)
 	if err != nil {
+		// discard IsNotFound error
+		if errors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
 	// config is invalid or was already provisioned - discard
 	if cfg.Status.ConfigStatus != statusProvisioning {
-		r.Logger.Info("NodeConfig discarded", "status", cfg.Status.ConfigStatus)
 		return nil
 	}
 
@@ -132,7 +136,6 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	// set config status as provisioned (valid)
 	cfg.Status.ConfigStatus = statusProvisioned
 	if err = r.client.Status().Update(ctx, cfg); err != nil {
-		r.Logger.Info("failed set NodeConfig status to provisioned")
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
@@ -156,7 +159,7 @@ func (r *reconcile) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.Node
 	}
 
 	// try to restore previously known good NodeConfig
-	if err := restoreNodeConfig(r); err != nil {
+	if err := r.restoreNodeConfig(); err != nil {
 		return fmt.Errorf("error restoring NodeConfig: %w", err)
 	}
 
@@ -179,27 +182,23 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 	return nil
 }
 
-func restoreNodeConfig(r *reconcile) error {
-	r.logger.Info("restoring config")
-	// config could be stored in memory and be read only on startup
-	r.logger.Info("reading data")
+func (r *reconcile) restoreNodeConfig() error {
+	// TODO: config could be stored in memory and be read only on startup
 	cfg, err := os.ReadFile(nodeConfigPath)
 	if err != nil {
 		return fmt.Errorf("error reading NodeConfig: %w", err)
 	}
 
-	r.logger.Info("unmarshalling data")
 	nodeCfg := &v1alpha1.NodeConfig{}
 	if err := json.Unmarshal(cfg, nodeCfg); err != nil {
 		return fmt.Errorf("error unmarshalling NodeConfig: %w", err)
 	}
 
-	r.logger.Info("doReconciliation")
 	if err = doReconciliation(r, nodeCfg); err != nil {
-		return fmt.Errorf("error restroing configuration: %w", err)
+		return fmt.Errorf("error restoring configuration: %w", err)
 	}
 
-	r.logger.Info("config restored")
+	r.logger.Info("restored last known valid config")
 
 	return nil
 }
