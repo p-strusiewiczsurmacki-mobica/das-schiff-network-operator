@@ -108,7 +108,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	r.Logger.Info("NodeConfig status", "status", cfg.Status.ConfigStatus)
 
 	// config is invalid or was already provisioned - discard
-	if cfg.Status.ConfigStatus == statusInvalid || cfg.Status.ConfigStatus == statusProvisioned {
+	if cfg.Status.ConfigStatus != statusProvisioning {
 		r.Logger.Info("NodeConfig discarded with", "status", cfg.Status.ConfigStatus)
 		return nil
 	}
