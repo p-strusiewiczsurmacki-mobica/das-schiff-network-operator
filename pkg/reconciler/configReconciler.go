@@ -27,6 +27,7 @@ const (
 	defaultCooldownTime = 100 * time.Millisecond
 )
 
+// ConfigReconciler is responsible for creating NodeConfig objects.
 type ConfigReconciler struct {
 	client    client.Client
 	logger    logr.Logger
@@ -38,10 +39,12 @@ type reconcileConfig struct {
 	logr.Logger
 }
 
+// Reconcile starts reconciliation.
 func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 	cr.debouncer.Debounce(ctx)
 }
 
+// NewConfigReconciler creates new reconciler that creates NodeConfig objects.
 func NewConfigReconciler(clusterClient client.Client, logger logr.Logger) (*ConfigReconciler, error) {
 	reconciler := &ConfigReconciler{
 		client: clusterClient,
@@ -336,6 +339,6 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newCo
 
 // remove element from slice preserving order
 // TODO: is it worth to preserve order?
-func remove[T any](slice []T, s int) []T {
-	return append(slice[:s], slice[s+1:]...)
+func remove[T any](slice []T, i int) []T {
+	return append(slice[:i], slice[i+1:]...)
 }
