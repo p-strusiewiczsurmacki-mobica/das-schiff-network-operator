@@ -211,9 +211,9 @@ func readNodeConfig(path string) (*v1alpha1.NodeConfig, error) {
 	return nodeConfig, nil
 }
 
-func storeNodeConfig(config *v1alpha1.NodeConfig, path string) error {
+func storeNodeConfig(cfg *v1alpha1.NodeConfig, path string) error {
 	// save working config
-	c, err := json.MarshalIndent(*config, "", " ")
+	c, err := json.MarshalIndent(*cfg, "", " ")
 	if err != nil {
 		panic(err)
 	}
