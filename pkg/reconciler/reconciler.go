@@ -21,8 +21,9 @@ import (
 
 const (
 	defaultDebounceTime = 20 * time.Second
-	nodeConfigPath      = "/opt/network-operator/nodeConfig.yaml"
-	nodeConfigFilePerm  = 0o600
+
+	DefaultNodeConfigPath = "/opt/network-operator/nodeConfig.yaml"
+	nodeConfigFilePerm    = 0o600
 )
 
 type Reconciler struct {
@@ -34,6 +35,7 @@ type Reconciler struct {
 	logger         logr.Logger
 	healthChecker  *healthcheck.HealthChecker
 	nodeConfig     *v1alpha1.NodeConfig
+	nodeConfigPath string
 
 	debouncer *debounce.Debouncer
 
@@ -45,13 +47,14 @@ type reconcile struct {
 	logr.Logger
 }
 
-func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger) (*Reconciler, error) {
+func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeConfigPath string) (*Reconciler, error) {
 	reconciler := &Reconciler{
 		client:         clusterClient,
 		netlinkManager: &nl.NetlinkManager{},
 		frrManager:     frr.NewFRRManager(),
 		anycastTracker: anycastTracker,
 		logger:         logger,
+		nodeConfigPath: nodeConfigPath,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -82,7 +85,7 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 		return nil, fmt.Errorf("error creating networking healthchecker: %w", err)
 	}
 
-	reconciler.nodeConfig, err = readNodeConfig(nodeConfigPath)
+	reconciler.nodeConfig, err = readNodeConfig(reconciler.nodeConfigPath)
 	if !errors.IsNotFound(err) {
 		return nil, fmt.Errorf("error reading NodeConfig from disk: %w", err)
 	}
@@ -147,7 +150,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 
 	// replace in-memory working config and store it on the disk
 	reconciler.nodeConfig = cfg
-	if err = storeNodeConfig(cfg, nodeConfigPath); err != nil {
+	if err = storeNodeConfig(cfg, reconciler.nodeConfigPath); err != nil {
 		return fmt.Errorf("error saving NodeConfig status: %w", err)
 	}
 
