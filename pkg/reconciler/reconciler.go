@@ -33,6 +33,7 @@ type Reconciler struct {
 	config         *config.Config
 	logger         logr.Logger
 	healthChecker  *healthcheck.HealthChecker
+	nodeConfig     *v1alpha1.NodeConfig
 
 	debouncer *debounce.Debouncer
 
@@ -79,6 +80,11 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 		nc)
 	if err != nil {
 		return nil, fmt.Errorf("error creating networking healthchecker: %w", err)
+	}
+
+	reconciler.nodeConfig, err = readNodeConfig(nodeConfigPath)
+	if !errors.IsNotFound(err) {
+		return nil, fmt.Errorf("error reading NodeConfig from disk: %w", err)
 	}
 
 	return reconciler, nil
@@ -139,13 +145,9 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
-	// save working config
-	c, err := json.MarshalIndent(*cfg, "", " ")
-	if err != nil {
-		panic(err)
-	}
-
-	if err = os.WriteFile(nodeConfigPath, c, nodeConfigFilePerm); err != nil {
+	// replace in-memory working config and store it on the disk
+	reconciler.nodeConfig = cfg
+	if err = storeNodeConfig(cfg, nodeConfigPath); err != nil {
 		return fmt.Errorf("error saving NodeConfig status: %w", err)
 	}
 
@@ -183,22 +185,39 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 }
 
 func (r *reconcile) restoreNodeConfig() error {
-	// TODO: config could be stored in memory and be read only on startup
-	cfg, err := os.ReadFile(nodeConfigPath)
-	if err != nil {
-		return fmt.Errorf("error reading NodeConfig: %w", err)
-	}
-
-	nodeCfg := &v1alpha1.NodeConfig{}
-	if err := json.Unmarshal(cfg, nodeCfg); err != nil {
-		return fmt.Errorf("error unmarshalling NodeConfig: %w", err)
-	}
-
-	if err = doReconciliation(r, nodeCfg); err != nil {
+	if err := doReconciliation(r, r.nodeConfig); err != nil {
 		return fmt.Errorf("error restoring configuration: %w", err)
 	}
 
 	r.logger.Info("restored last known valid config")
+
+	return nil
+}
+
+func readNodeConfig(path string) (*v1alpha1.NodeConfig, error) {
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("error reading NodeConfig: %w", err)
+	}
+
+	nodeConfig := &v1alpha1.NodeConfig{}
+	if err := json.Unmarshal(cfg, nodeConfig); err != nil {
+		return nil, fmt.Errorf("error unmarshalling NodeConfig: %w", err)
+	}
+
+	return nodeConfig, nil
+}
+
+func storeNodeConfig(config *v1alpha1.NodeConfig, path string) error {
+	// save working config
+	c, err := json.MarshalIndent(*config, "", " ")
+	if err != nil {
+		panic(err)
+	}
+
+	if err = os.WriteFile(path, c, nodeConfigFilePerm); err != nil {
+		return fmt.Errorf("error saving NodeConfig status: %w", err)
+	}
 
 	return nil
 }
