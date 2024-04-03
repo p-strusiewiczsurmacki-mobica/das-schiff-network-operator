@@ -22,8 +22,7 @@ const (
 	statusInvalid      = "invalid"
 	statusProvisioned  = "provisioned"
 
-	// TODO: make those configurable.
-	defaultTimeout      = 60 * time.Second
+	DefaultTimeout      = "60s"
 	defaultCooldownTime = 100 * time.Millisecond
 )
 
@@ -32,6 +31,7 @@ type ConfigReconciler struct {
 	client    client.Client
 	logger    logr.Logger
 	debouncer *debounce.Debouncer
+	timeout   time.Duration
 }
 
 type reconcileConfig struct {
@@ -45,10 +45,16 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewConfigReconciler(clusterClient client.Client, logger logr.Logger) (*ConfigReconciler, error) {
+func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string) (*ConfigReconciler, error) {
+	t, err := time.ParseDuration(timeout)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing timeout %s: %w", timeout, err)
+	}
+
 	reconciler := &ConfigReconciler{
-		client: clusterClient,
-		logger: logger,
+		client:  clusterClient,
+		logger:  logger,
+		timeout: t,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -156,8 +162,8 @@ func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1al
 	}
 }
 
-func (cr *ConfigReconciler) waitForConfig(ctx context.Context, timeout time.Duration, config *v1alpha1.NodeConfig, expectedStatus string) error {
-	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
+func (cr *ConfigReconciler) waitForConfig(ctx context.Context, config *v1alpha1.NodeConfig, expectedStatus string) error {
+	ctxTimeout, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
 
 	if err := cr.waitForConfigGet(ctxTimeout, config, expectedStatus); err != nil {
@@ -319,7 +325,7 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newCo
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	// wait for config te be created
-	if err := cr.waitForConfig(ctx, defaultTimeout, newConfigs[name], statusProvisioned); err != nil {
+	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned); err != nil {
 		// if cannot get config status or status is 'provisoning' and request timed out
 		// let's assume that the node died and was unable to invalidate config
 		// so we will do that here

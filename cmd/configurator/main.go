@@ -58,6 +58,7 @@ func main() {
 	var onlyBPFMode bool
 	var configFile string
 	var interfacePrefix string
+	var timeout string
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -65,7 +66,9 @@ func main() {
 	flag.BoolVar(&onlyBPFMode, "only-attach-bpf", false,
 		"Only attach BPF to specified interfaces in config. This will not start any reconciliation. Perfect for masters.")
 	flag.StringVar(&interfacePrefix, "macvlan-interface-prefix", "",
-		"Interface prefix for bridge devices for MACVlan sync")
+		"Interface prefix for bridge devices for MACVlan sync.")
+	flag.StringVar(&timeout, "timeout", reconciler.DefaultTimeout,
+		"Timeout for Kubernetes API connections (default: 60s).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -74,6 +77,7 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	var err error
+	// TODO: check if those options are really required
 	var options manager.Options
 	if configFile != "" {
 		options, err = managerconfig.Load(configFile, scheme)
@@ -98,7 +102,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := initComponents(mgr); err != nil {
+	if err := initComponents(mgr, timeout); err != nil {
 		setupLog.Error(err, "unable to initialize components")
 		os.Exit(1)
 	}
@@ -115,9 +119,9 @@ func main() {
 	}
 }
 
-func initComponents(mgr manager.Manager) error {
+func initComponents(mgr manager.Manager, timeout string) error {
 	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
-	if err := setupReconcilers(mgr); err != nil {
+	if err := setupReconcilers(mgr, timeout); err != nil {
 		return fmt.Errorf("unable to setup reconcilers: %w", err)
 	}
 	//+kubebuilder:scaffold:builder
@@ -125,8 +129,8 @@ func initComponents(mgr manager.Manager) error {
 	return nil
 }
 
-func setupReconcilers(mgr manager.Manager) error {
-	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger())
+func setupReconcilers(mgr manager.Manager, timeout string) error {
+	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout)
 	if err != nil {
 		return fmt.Errorf("unable to create debounced reconciler: %w", err)
 	}
