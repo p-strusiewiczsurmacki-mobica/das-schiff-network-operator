@@ -77,7 +77,6 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	var err error
-	// TODO: check if those options are really required
 	var options manager.Options
 	if configFile != "" {
 		options, err = managerconfig.Load(configFile, scheme)
@@ -89,10 +88,13 @@ func main() {
 		options = ctrl.Options{Scheme: scheme}
 	}
 
+	// force leader election
 	options.LeaderElection = true
-	options.LeaderElectionID = "configurator"
+	if options.LeaderElectionID == "" {
+		options.LeaderElectionID = "configurator"
+	}
 
-	// turn off metrics server
+	// force turn off metrics server
 	options.MetricsBindAddress = "0"
 
 	clientConfig := ctrl.GetConfigOrDie()
