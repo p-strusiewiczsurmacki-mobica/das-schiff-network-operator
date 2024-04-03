@@ -59,6 +59,7 @@ func main() {
 	var configFile string
 	var interfacePrefix string
 	var timeout string
+	var limit int64
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -69,6 +70,8 @@ func main() {
 		"Interface prefix for bridge devices for MACVlan sync.")
 	flag.StringVar(&timeout, "timeout", reconciler.DefaultTimeout,
 		"Timeout for Kubernetes API connections (default: 60s).")
+	flag.Int64Var(&limit, "update-limit", reconciler.DefaultNodeUpdateLimit,
+		"Defines how many nodes can be configured at once (default: 1).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -76,35 +79,20 @@ func main() {
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	var err error
-	var options manager.Options
-	if configFile != "" {
-		options, err = managerconfig.Load(configFile, scheme)
-		if err != nil {
-			setupLog.Error(err, "unable to load the config file")
-			os.Exit(1)
-		}
-	} else {
-		options = ctrl.Options{Scheme: scheme}
+	options, err := setMangerOptions(configFile)
+	if err != nil {
+		setupLog.Error(err, "error configuring manager options")
+		os.Exit(1)
 	}
-
-	// force leader election
-	options.LeaderElection = true
-	if options.LeaderElectionID == "" {
-		options.LeaderElectionID = "configurator"
-	}
-
-	// force turn off metrics server
-	options.MetricsBindAddress = "0"
 
 	clientConfig := ctrl.GetConfigOrDie()
-	mgr, err := ctrl.NewManager(clientConfig, options)
+	mgr, err := ctrl.NewManager(clientConfig, *options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
-	if err := initComponents(mgr, timeout); err != nil {
+	if err := initComponents(mgr, timeout, limit); err != nil {
 		setupLog.Error(err, "unable to initialize components")
 		os.Exit(1)
 	}
@@ -121,9 +109,9 @@ func main() {
 	}
 }
 
-func initComponents(mgr manager.Manager, timeout string) error {
+func initComponents(mgr manager.Manager, timeout string, limit int64) error {
 	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
-	if err := setupReconcilers(mgr, timeout); err != nil {
+	if err := setupReconcilers(mgr, timeout, limit); err != nil {
 		return fmt.Errorf("unable to setup reconcilers: %w", err)
 	}
 	//+kubebuilder:scaffold:builder
@@ -131,8 +119,8 @@ func initComponents(mgr manager.Manager, timeout string) error {
 	return nil
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string) error {
-	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout)
+func setupReconcilers(mgr manager.Manager, timeout string, limit int64) error {
+	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, limit)
 	if err != nil {
 		return fmt.Errorf("unable to create debounced reconciler: %w", err)
 	}
@@ -162,4 +150,30 @@ func setupReconcilers(mgr manager.Manager, timeout string) error {
 	}
 
 	return nil
+}
+
+func setMangerOptions(configFile string) (*manager.Options, error) {
+	var err error
+	var options manager.Options
+	if configFile != "" {
+		options, err = managerconfig.Load(configFile, scheme)
+		if err != nil {
+			return nil, fmt.Errorf("unable to load the config file: %w", err)
+			// setupLog.Error(err, "unable to load the config file")
+			// os.Exit(1)
+		}
+	} else {
+		options = ctrl.Options{Scheme: scheme}
+	}
+
+	// force leader election
+	options.LeaderElection = true
+	if options.LeaderElectionID == "" {
+		options.LeaderElectionID = "configurator"
+	}
+
+	// force turn off metrics server
+	options.MetricsBindAddress = "0"
+
+	return &options, nil
 }

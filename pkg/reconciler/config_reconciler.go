@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/debounce"
+	"golang.org/x/sync/semaphore"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -22,8 +24,9 @@ const (
 	statusInvalid      = "invalid"
 	statusProvisioned  = "provisioned"
 
-	DefaultTimeout      = "60s"
-	defaultCooldownTime = 100 * time.Millisecond
+	DefaultTimeout         = "60s"
+	DefaultNodeUpdateLimit = 1
+	defaultCooldownTime    = 100 * time.Millisecond
 )
 
 // ConfigReconciler is responsible for creating NodeConfig objects.
@@ -32,6 +35,7 @@ type ConfigReconciler struct {
 	logger    logr.Logger
 	debouncer *debounce.Debouncer
 	timeout   time.Duration
+	sem       *semaphore.Weighted
 }
 
 type reconcileConfig struct {
@@ -45,7 +49,7 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string) (*ConfigReconciler, error) {
+func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string, limit int64) (*ConfigReconciler, error) {
 	t, err := time.ParseDuration(timeout)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing timeout %s: %w", timeout, err)
@@ -55,6 +59,7 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 		client:  clusterClient,
 		logger:  logger,
 		timeout: t,
+		sem:     semaphore.NewWeighted(limit),
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -95,11 +100,30 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// process new NodeConfigs one by one
-	// TODO: allow to deploy on n nodes at the same time, configurable
+	deployCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	deploymentErr := make(chan error, len(newConfigs))
 	for name := range newConfigs {
-		if err := cr.deployConfig(ctx, name, newConfigs, existingConfigs); err != nil {
-			return fmt.Errorf("error deploying config: %w", err)
+		wg.Add(1)
+		go cr.deployConfig(deployCtx, cancel, &wg, name, newConfigs, existingConfigs, deploymentErr)
+	}
+
+	wg.Wait()
+	close(deploymentErr)
+
+	errorsOccurred := false
+	for err := range deploymentErr {
+		if err != nil {
+			cr.logger.Error(err, "error deploying config")
+			errorsOccurred = true
 		}
+	}
+
+	if errorsOccurred {
+		return fmt.Errorf("errors occurred when deploying config")
 	}
 
 	return nil
@@ -139,7 +163,7 @@ func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha
 	return configs, nil
 }
 
-func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1alpha1.NodeConfig, expectedStatus string) error {
+func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -153,8 +177,8 @@ func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1al
 				}
 
 				// return error if status is invalid
-				if instance.Status.ConfigStatus == statusInvalid {
-					return fmt.Errorf("error creating NodeConfig - node %s reported state as invalid", instance.Name)
+				if failIfInvalid && instance.Status.ConfigStatus == statusInvalid {
+					return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", instance.Name, instance.Status.ConfigStatus)
 				}
 			}
 			time.Sleep(defaultCooldownTime)
@@ -162,11 +186,11 @@ func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1al
 	}
 }
 
-func (cr *ConfigReconciler) waitForConfig(ctx context.Context, config *v1alpha1.NodeConfig, expectedStatus string) error {
+func (cr *ConfigReconciler) waitForConfig(ctx context.Context, config *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool) error {
 	ctxTimeout, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
 
-	if err := cr.waitForConfigGet(ctxTimeout, config, expectedStatus); err != nil {
+	if err := cr.waitForConfigGet(ctxTimeout, config, expectedStatus, failIfInvalid); err != nil {
 		return fmt.Errorf("error getting config: %w", err)
 	}
 
@@ -293,7 +317,15 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 	return selector, nil
 }
 
-func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) error {
+func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, name string, newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig, errCh chan error) {
+	defer wg.Done()
+
+	if err := cr.sem.Acquire(ctx, 1); err != nil {
+		sendError("error acquiring semaphore", err, errCh, cancel)
+		return
+	}
+	defer cr.sem.Release(1)
+
 	cr.logger.Info("NodeConfig", name, *newConfigs[name])
 	if _, exists := existingConfigs[name]; exists {
 		// config already exists - update
@@ -302,45 +334,59 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, name string, newCo
 		// if so, skip the update as nothing has to be updated
 		existing := existingConfigs[name]
 		if newConfigs[name].IsEqual(&existing) {
-			return nil
+			errCh <- nil
+			return
 		}
 
 		if err := cr.client.Update(ctx, newConfigs[name]); err != nil {
-			return fmt.Errorf("error updating NodeConfig object: %w", err)
+			sendError("error updating NodeConfig object", err, errCh, cancel)
+			return
 		}
 	} else {
 		// config does not exist - create
 		if err := cr.client.Create(ctx, newConfigs[name]); err != nil {
-			cr.logger.Error(err, "error creating NodeConfig object")
-			return fmt.Errorf("error creating NodeConfig object: %w", err)
+			sendError("error creating NodeConfig object", err, errCh, cancel)
+			return
 		}
 	}
 
 	// update the status with statusProvisioning
 	newConfigs[name].Status.ConfigStatus = statusProvisioning
-	err := cr.client.Status().Update(ctx, newConfigs[name])
-	if err != nil {
-		return fmt.Errorf("error creating NodeConfig status: %w", err)
+	if err := cr.client.Status().Update(ctx, newConfigs[name]); err != nil {
+		sendError("error creating NodeConfig status", err, errCh, cancel)
+		return
+	}
+
+	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioning, false); err != nil {
+		sendError(fmt.Sprintf("error waiting for NodeConfig status %s", statusProvisioning), err, errCh, cancel)
+		return
 	}
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	// wait for config te be created
-	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned); err != nil {
+	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned, true); err != nil {
 		// if cannot get config status or status is 'provisoning' and request timed out
 		// let's assume that the node died and was unable to invalidate config
 		// so we will do that here
 		if newConfigs[name].Status.ConfigStatus == statusProvisioning {
 			newConfigs[name].Status.ConfigStatus = statusInvalid
 			if err := cr.client.Status().Update(ctx, newConfigs[name]); err != nil {
-				return fmt.Errorf("error invalidating config: %w", err)
+				sendError("error invalidating config", err, errCh, cancel)
+				return
 			}
 		}
-		return fmt.Errorf("error waiting for NodeConfig: %w", err)
+		sendError(fmt.Sprintf("error waiting for NodeConfig status %s", statusProvisioned), err, errCh, cancel)
+		return
 	}
 
 	cr.logger.Info("config deployed", "name", name, "status", newConfigs[name].Status.ConfigStatus)
 
-	return nil
+	errCh <- nil
+}
+
+func sendError(text string, err error, errCh chan error, cancel context.CancelFunc) {
+	errCh <- fmt.Errorf("%s: %w", text, err)
+	cancel()
 }
 
 // remove element from slice preserving order

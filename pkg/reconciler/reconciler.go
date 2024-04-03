@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/frr"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -86,7 +87,7 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 	}
 
 	reconciler.nodeConfig, err = readNodeConfig(reconciler.nodeConfigPath)
-	if !errors.IsNotFound(err) {
+	if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("error reading NodeConfig from disk: %w", err)
 	}
 
@@ -111,7 +112,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	cfg, err := r.fetchNodeConfig(ctx)
 	if err != nil {
 		// discard IsNotFound error
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return err
@@ -188,6 +189,9 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 }
 
 func (r *reconcile) restoreNodeConfig() error {
+	if r.nodeConfig == nil {
+		return nil
+	}
 	if err := doReconciliation(r, r.nodeConfig); err != nil {
 		return fmt.Errorf("error restoring configuration: %w", err)
 	}
