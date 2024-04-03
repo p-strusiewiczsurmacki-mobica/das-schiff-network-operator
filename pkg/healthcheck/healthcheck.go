@@ -43,8 +43,8 @@ var (
 
 // HealthChecker is a struct that holds data required for networking healthcheck.
 type HealthChecker struct {
-	client              client.Client
-	isNetworkingHealthy bool
+	client        client.Client
+	taintsRemoved bool
 	logr.Logger
 	netConfig *NetHealthcheckConfig
 	toolkit   *Toolkit
@@ -61,18 +61,18 @@ func NewHealthChecker(clusterClient client.Client, toolkit *Toolkit, netconf *Ne
 	}
 
 	return &HealthChecker{
-		client:              clusterClient,
-		isNetworkingHealthy: false,
-		Logger:              log.Log.WithName("HealthCheck"),
-		netConfig:           netconf,
-		toolkit:             toolkit,
-		retries:             retries,
+		client:        clusterClient,
+		taintsRemoved: false,
+		Logger:        log.Log.WithName("HealthCheck"),
+		netConfig:     netconf,
+		toolkit:       toolkit,
+		retries:       retries,
 	}, nil
 }
 
-// IsNetworkingHealthy returns value of isNetworkingHealthly bool.
-func (hc *HealthChecker) IsNetworkingHealthy() bool {
-	return hc.isNetworkingHealthy
+// TaintsRemoved returns value of isNetworkingHealthly bool.
+func (hc *HealthChecker) TaintsRemoved() bool {
+	return hc.taintsRemoved
 }
 
 // RemoveTaints removes taint from the node.
@@ -102,7 +102,7 @@ func (hc *HealthChecker) RemoveTaints(ctx context.Context) error {
 		}
 	}
 
-	hc.isNetworkingHealthy = true
+	hc.taintsRemoved = true
 
 	return nil
 }
