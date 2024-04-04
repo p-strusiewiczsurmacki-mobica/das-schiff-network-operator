@@ -281,7 +281,8 @@ func preparePerNodeConfigs(nodes map[string]corev1.Node, existingConfigs map[str
 
 			// remove currently processed Layer2NetworkConfigurationSpec if node does not match the selector
 			if !selector.Matches(labels.Set(nodes[name].ObjectMeta.Labels)) {
-				c.Spec.Layer2 = remove(c.Spec.Layer2, i)
+				// TODO: is it worth to preserve order?
+				c.Spec.Layer2 = append(c.Spec.Layer2[:i], c.Spec.Layer2[i+1:]...)
 				i--
 			}
 		}
@@ -387,10 +388,4 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.Can
 func sendError(text string, err error, errCh chan error, cancel context.CancelFunc) {
 	errCh <- fmt.Errorf("%s: %w", text, err)
 	cancel()
-}
-
-// remove element from slice preserving order
-// TODO: is it worth to preserve order?
-func remove[T any](slice []T, i int) []T {
-	return append(slice[:i], slice[i+1:]...)
 }
