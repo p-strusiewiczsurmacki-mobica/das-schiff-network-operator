@@ -93,7 +93,8 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	// prepare map of NewConfigs (hostname is a map's key)
 	// we simply add l3Spec and taasSpec to *all* configs, as
 	// VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
-	// are global respources (no node selectors are implemented) (TODO: Am I correct here?)
+	// are global respources (no node selectors are implemented)
+	// TODO: Am I correct here?
 	newConfigs, err := preparePerNodeConfigs(nodes, existingConfigs, cfg)
 	if err != nil {
 		return fmt.Errorf("error preparing configs for nodes: %w", err)
