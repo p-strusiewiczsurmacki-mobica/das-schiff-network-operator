@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -67,6 +68,7 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 	return reconciler, nil
 }
 
+// nolint: gocritic
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
@@ -90,44 +92,62 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing configs: %w", err)
 	}
 
+	// create buckup for currently existing configs
+	backupConfigs := make(map[string]*v1alpha1.NodeConfig)
+	for k, v := range existingConfigs {
+		backupConfigs[k] = v.DeepCopy()
+	}
+
 	// prepare map of NewConfigs (hostname is a map's key)
 	// we simply add l3Spec and taasSpec to *all* configs, as
 	// VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
-	// are global respources (no node selectors are implemented)
-	// TODO: Am I correct here?
+	// are global respources (no node selectors are implemented) - TODO: Am I correct here?
 	newConfigs, err := preparePerNodeConfigs(nodes, existingConfigs, cfg)
 	if err != nil {
 		return fmt.Errorf("error preparing configs for nodes: %w", err)
 	}
 
-	// process new NodeConfigs one by one
-	deployCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var wg sync.WaitGroup
-
-	deploymentErr := make(chan error, len(newConfigs))
-	for name := range newConfigs {
-		wg.Add(1)
-		go cr.deployConfig(deployCtx, cancel, &wg, name, newConfigs, existingConfigs, deploymentErr)
-	}
-
-	wg.Wait()
-	close(deploymentErr)
-
-	errorsOccurred := false
-	for err := range deploymentErr {
-		if err != nil {
-			cr.logger.Error(err, "error deploying config")
-			errorsOccurred = true
+	// if backup config does not exists for a new config, add empty one
+	for k := range newConfigs {
+		if _, exists := backupConfigs[k]; !exists {
+			backupConfigs[k] = v1alpha1.NewEmptyConfig(k)
 		}
 	}
 
-	if errorsOccurred {
-		return fmt.Errorf("errors occurred when deploying config")
+	err = cr.deployConfigs(ctx, newConfigs, existingConfigs)
+
+	// if error occurred, revert changes
+	if err != nil {
+		// list all NodeConfigs that were already deployed
+		existingConfigs, listingError := cr.listConfigs(ctx)
+		if listingError != nil {
+			return fmt.Errorf("error listing configs: %w", listingError)
+		}
+
+		prepareBackup(existingConfigs, backupConfigs)
+
+		cr.logger.Info("will deploy backup")
+		if restoreErr := cr.deployConfigs(ctx, backupConfigs, existingConfigs); restoreErr != nil {
+			return fmt.Errorf("error restoring configuration: %w", restoreErr)
+		}
+
+		return fmt.Errorf("error deploying config: %w", err)
 	}
 
 	return nil
+}
+
+func prepareBackup(existingConfigs map[string]v1alpha1.NodeConfig, backupConfigs map[string]*v1alpha1.NodeConfig) {
+	for name := range existingConfigs {
+		existing := existingConfigs[name]
+		existing.Spec.Vrf = backupConfigs[name].Spec.Vrf
+		existing.Spec.RoutingTable = backupConfigs[name].Spec.RoutingTable
+
+		existing.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(backupConfigs[name].Spec.Layer2))
+		copy(existing.Spec.Layer2, backupConfigs[name].Spec.Layer2)
+
+		backupConfigs[name] = &existing
+	}
 }
 
 func (cr *ConfigReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
@@ -245,7 +265,7 @@ func preparePerNodeConfigs(nodes map[string]corev1.Node, existingConfigs map[str
 		if _, exists := existingConfigs[name]; exists {
 			// config already exist - update (is this safe? Won't there be any leftovers in the config?)
 			x := existingConfigs[name]
-			c = &x
+			c = x.DeepCopy()
 		} else {
 			// config does not exist - create new
 			c = &v1alpha1.NodeConfig{
@@ -319,6 +339,7 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 	return selector, nil
 }
 
+// TODO: I don't like that newConfigs uses pointers and existingConfigs don't. Maybe this could be made consistent?
 func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, name string, newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig, errCh chan error) {
 	defer wg.Done()
 
@@ -331,7 +352,6 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.Can
 	cr.logger.Info("NodeConfig", name, *newConfigs[name])
 	if _, exists := existingConfigs[name]; exists {
 		// config already exists - update
-
 		// check if new config is equal to existing config
 		// if so, skip the update as nothing has to be updated
 		existing := existingConfigs[name]
@@ -339,7 +359,6 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.Can
 			errCh <- nil
 			return
 		}
-
 		if err := cr.client.Update(ctx, newConfigs[name]); err != nil {
 			sendError("error updating NodeConfig object", err, errCh, cancel)
 			return
@@ -381,6 +400,9 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.Can
 		return
 	}
 
+	// set new config as existing config
+	existingConfigs[name] = *newConfigs[name]
+
 	cr.logger.Info("config deployed", "name", name, "status", newConfigs[name].Status.ConfigStatus)
 
 	errCh <- nil
@@ -389,4 +411,37 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, cancel context.Can
 func sendError(text string, err error, errCh chan error, cancel context.CancelFunc) {
 	errCh <- fmt.Errorf("%s: %w", text, err)
 	cancel()
+}
+
+func (cr *ConfigReconciler) deployConfigs(ctx context.Context, newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) error {
+	// process new NodeConfigs one by one
+	deployCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	deploymentErr := make(chan error, len(newConfigs))
+	for name := range newConfigs {
+		wg.Add(1)
+		go cr.deployConfig(deployCtx, cancel, &wg, name, newConfigs, existingConfigs, deploymentErr)
+	}
+
+	wg.Wait()
+	close(deploymentErr)
+
+	errorsOccurred := false
+	for err := range deploymentErr {
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				cr.logger.Error(err, "error deploying config")
+			}
+			errorsOccurred = true
+		}
+	}
+
+	if errorsOccurred {
+		return fmt.Errorf("errors occurred while deploying config")
+	}
+
+	return nil
 }

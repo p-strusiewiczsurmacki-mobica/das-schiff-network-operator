@@ -61,6 +61,20 @@ func (nc *NodeConfig) IsEqual(c *NodeConfig) bool {
 	return reflect.DeepEqual(nc.Spec.Layer2, c.Spec.Layer2) && reflect.DeepEqual(nc.Spec.Vrf, c.Spec.Vrf) && reflect.DeepEqual(nc.Spec.RoutingTable, c.Spec.RoutingTable)
 }
 
+func NewEmptyConfig(name string) *NodeConfig {
+	return &NodeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: NodeConfigSpec{
+			Vrf:          []VRFRouteConfigurationSpec{},
+			Layer2:       []Layer2NetworkConfigurationSpec{},
+			RoutingTable: []RoutingTableSpec{},
+		},
+		Status: NodeConfigStatus{
+			ConfigStatus: "",
+		},
+	}
+}
+
 func init() {
 	SchemeBuilder.Register(&NodeConfig{}, &NodeConfigList{})
 }
