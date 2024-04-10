@@ -31,6 +31,7 @@ const (
 	defaultCooldownTime    = 100 * time.Millisecond
 
 	invalidSuffix = "-invalid"
+	backupSuffix  = "-backup"
 )
 
 // ConfigReconciler is responsible for creating NodeConfig objects.
@@ -96,15 +97,10 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing configs: %w", err)
 	}
 
-	// separate invalid configs and exisiting configs
-	invalidConfigs := make(map[string]v1alpha1.NodeConfig)
-	for k := range existingConfigs {
-		if strings.Contains(k, invalidSuffix) {
-			newKey := strings.ReplaceAll(k, invalidSuffix, "")
-			invalidConfigs[newKey] = existingConfigs[k]
-			delete(existingConfigs, k)
-		}
-	}
+	// separate invalid configs, current configs and backups
+	// this also removes invalid and backup configs from the existing configs
+	invalidConfigs := getConfigsBySuffix(invalidSuffix, existingConfigs)
+	getConfigsBySuffix(backupSuffix, existingConfigs)
 
 	// prepare map of NewConfigs (hostname is a map's key)
 	// we simply add l3Spec and taasSpec to *all* configs, as
@@ -121,15 +117,15 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return err
 	}
 
-	// create backup configs
-	backupConfigs := createBackups(newConfigs, existingConfigs)
+	// // create backup configs
+	// backupConfigs := createBackups(newConfigs, existingConfigs)
 
 	// deploy new configs
-	deployed, err := cr.processConfigs(ctx, newConfigs, existingConfigs)
+	deployed, err := cr.processConfigs(ctx, newConfigs, existingConfigs, true)
 
 	// if error occurred, revert changes
 	if err != nil {
-		if err := cr.revertChanges(ctx, deployed, backupConfigs); err != nil {
+		if err := cr.revertChanges(ctx, deployed); err != nil {
 			return fmt.Errorf("error reverting changes: %w", err)
 		}
 
@@ -140,18 +136,33 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (cr *ConfigReconciler) revertChanges(ctx context.Context, deployed []string, backupConfigs map[string]*v1alpha1.NodeConfig) error {
+func getConfigsBySuffix(suffix string, configs map[string]v1alpha1.NodeConfig) map[string]v1alpha1.NodeConfig {
+	cfg := make(map[string]v1alpha1.NodeConfig)
+	for k := range configs {
+		if strings.Contains(k, suffix) {
+			newKey := strings.ReplaceAll(k, suffix, "")
+			cfg[newKey] = configs[k]
+			delete(configs, k)
+		}
+	}
+	return cfg
+}
+
+func (cr *ConfigReconciler) revertChanges(ctx context.Context, deployed []string) error {
 	// refresh current configs
 	existingConfigs, listingError := cr.listConfigs(ctx)
 	if listingError != nil {
 		return fmt.Errorf("error listing configs: %w", listingError)
 	}
 
+	backupConfigs := getConfigsBySuffix(backupSuffix, existingConfigs)
+
 	// select what should be restored
 	toRestore := prepareBackups(deployed, existingConfigs, backupConfigs)
 
 	// restore configs from backup
-	if _, restoreErr := cr.processConfigs(ctx, toRestore, existingConfigs); restoreErr != nil {
+	// we dont want to backup invalid configs, therefore we are disabling backup
+	if _, restoreErr := cr.processConfigs(ctx, toRestore, existingConfigs, false); restoreErr != nil {
 		return fmt.Errorf("error restoring configuration: %w", restoreErr)
 	}
 
@@ -174,32 +185,11 @@ func checkInvalidConfigs(newConfigs map[string]*v1alpha1.NodeConfig, invalidConf
 	return nil
 }
 
-// nolint: gocritic
-func createBackups(newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) map[string]*v1alpha1.NodeConfig {
-	// buckup currently existing configs
-	backupConfigs := make(map[string]*v1alpha1.NodeConfig)
-	for k, v := range existingConfigs {
-		backupConfigs[k] = v.DeepCopy()
-	}
-
-	// if backup config does not exists for a new config, add empty one
-	for name := range newConfigs {
-		if _, exists := backupConfigs[name]; !exists {
-			backupConfigs[name] = v1alpha1.NewEmptyConfig(name)
-		}
-	}
-
-	return backupConfigs
-}
-
 // For each config that should be restored find current config, and replace it's values with backup.
 func prepareBackups(toRestore []string, existingConfigs map[string]v1alpha1.NodeConfig,
-	backupConfigs map[string]*v1alpha1.NodeConfig) map[string]*v1alpha1.NodeConfig {
+	backupConfigs map[string]v1alpha1.NodeConfig) map[string]*v1alpha1.NodeConfig {
 	filteredBackups := map[string]*v1alpha1.NodeConfig{}
 	for _, name := range toRestore {
-		if strings.Contains(name, invalidSuffix) {
-			continue
-		}
 		existing := existingConfigs[name]
 		existing.Spec.Vrf = backupConfigs[name].Spec.Vrf
 		existing.Spec.RoutingTable = backupConfigs[name].Spec.RoutingTable
@@ -406,7 +396,7 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.CancelFunc,
 	wg *sync.WaitGroup, name string,
 	newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig,
-	deployed chan string, errCh chan error) {
+	processedNodes chan string, errCh chan error, backup bool) {
 	defer wg.Done()
 
 	// acquire the semaphore lock with weight 1
@@ -423,15 +413,15 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 	// deploy config
 	// return if error occurred or it was not required to deokoy the config
-	wasProcessed, err := cr.deployConfig(ctx, newConfigs[name], existingConfigs)
-	if err != nil || !wasProcessed {
+	deployed, err := cr.deployConfig(ctx, newConfigs[name], existingConfigs, backup)
+	if err != nil || !deployed {
 		errCh <- err
 		return
 	}
 
 	// at his point CRD object was created/updated so we report config as deployed
 	// this will be later used for reverting changes if any node reports an error
-	deployed <- name
+	processedNodes <- name
 
 	// set the status to provisioning
 	newConfigs[name].Status.ConfigStatus = statusProvisioning
@@ -464,7 +454,14 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 	errCh <- nil
 }
 
-func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) (bool, error) {
+func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.NodeConfig,
+	existingConfigs map[string]v1alpha1.NodeConfig, backup bool) (bool, error) {
+	if backup {
+		if err := cr.createBackup(ctx, config, existingConfigs); err != nil {
+			return false, fmt.Errorf("error creating backup config: %w", err)
+		}
+	}
+
 	if _, exists := existingConfigs[config.Name]; exists {
 		// config already exists - update
 		// check if new config is equal to existing config
@@ -476,10 +473,11 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.N
 		if err := cr.client.Update(ctx, config); err != nil {
 			return true, fmt.Errorf("error updating NodeConfig object: %w", err)
 		}
-	}
-	// config does not exist - create
-	if err := cr.client.Create(ctx, config); err != nil {
-		return true, fmt.Errorf("error creating NodeConfig object: %w", err)
+	} else {
+		// config does not exist - create
+		if err := cr.client.Create(ctx, config); err != nil {
+			return true, fmt.Errorf("error creating NodeConfig object: %w", err)
+		}
 	}
 
 	return true, nil
@@ -495,6 +493,37 @@ func copyNodeConfig(src, dst *v1alpha1.NodeConfig, name string) {
 	dst.Name = name
 }
 
+func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) error {
+	backupName := config.Name + backupSuffix
+	backup := &v1alpha1.NodeConfig{}
+
+	createNew := false
+	if err := cr.client.Get(ctx, types.NamespacedName{Name: backupName}, backup); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error getting backup config %s: %w", backupName, err)
+		}
+		createNew = true
+	}
+
+	if exisitingCfg, exists := existingConfigs[config.Name]; exists {
+		copyNodeConfig(&exisitingCfg, backup, backupName)
+	} else {
+		copyNodeConfig(v1alpha1.NewEmptyConfig(backupName), backup, backupName)
+	}
+
+	if createNew {
+		if err := cr.client.Create(ctx, backup); err != nil {
+			return fmt.Errorf("error creating backup config: %w", err)
+		}
+	} else {
+		if err := cr.client.Update(ctx, backup); err != nil {
+			return fmt.Errorf("error updating backup config: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func sendError(text string, err error, errCh chan error, cancel context.CancelFunc) {
 	errCh <- fmt.Errorf("%s: %w", text, err)
 	cancel()
@@ -508,7 +537,7 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, &invalidConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			// invalid config for the node does not exist - create new
-			copyNodeConfig(&invalidConfig, configToInvalidate, invalidName)
+			copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
 			if err = cr.client.Create(ctx, &invalidConfig); err != nil {
 				return fmt.Errorf("cannot store invalid config for node %s: %w", configToInvalidate.Name, err)
 			}
@@ -519,7 +548,7 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	}
 
 	// invalid config for the node exist - update
-	copyNodeConfig(&invalidConfig, configToInvalidate, invalidName)
+	copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
 	if err := cr.client.Update(ctx, &invalidConfig); err != nil {
 		return fmt.Errorf("error updating invalid config for node %s: %w", configToInvalidate.Name, err)
 	}
@@ -547,7 +576,8 @@ func (cr *ConfigReconciler) invalidateConfig(ctx context.Context, config *v1alph
 }
 
 func (cr *ConfigReconciler) processConfigs(ctx context.Context,
-	newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig) ([]string, error) {
+	newConfigs map[string]*v1alpha1.NodeConfig, existingConfigs map[string]v1alpha1.NodeConfig,
+	backup bool) ([]string, error) {
 	// process new NodeConfigs one by one
 	deployCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -558,7 +588,7 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	deployedNodes := make(chan string, len(newConfigs))
 	for name := range newConfigs {
 		wg.Add(1)
-		go cr.processConfig(deployCtx, cancel, &wg, name, newConfigs, existingConfigs, deployedNodes, deploymentErr)
+		go cr.processConfig(deployCtx, cancel, &wg, name, newConfigs, existingConfigs, deployedNodes, deploymentErr, backup)
 	}
 
 	wg.Wait()
