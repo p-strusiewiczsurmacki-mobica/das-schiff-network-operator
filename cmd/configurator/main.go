@@ -28,7 +28,6 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	"github.com/telekom/das-schiff-network-operator/pkg/macvlan"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 
@@ -92,14 +91,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := initComponents(mgr, timeout, limit); err != nil {
-		setupLog.Error(err, "unable to initialize components")
+	err = setupReconcilers(mgr, timeout, limit)
+	if err != nil {
+		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
-	}
-
-	if interfacePrefix != "" {
-		setupLog.Info("start macvlan sync")
-		macvlan.RunMACSync(interfacePrefix)
 	}
 
 	setupLog.Info("starting manager")
@@ -107,16 +102,6 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-}
-
-func initComponents(mgr manager.Manager, timeout string, limit int64) error {
-	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
-	if err := setupReconcilers(mgr, timeout, limit); err != nil {
-		return fmt.Errorf("unable to setup reconcilers: %w", err)
-	}
-	//+kubebuilder:scaffold:builder
-
-	return nil
 }
 
 func setupReconcilers(mgr manager.Manager, timeout string, limit int64) error {
@@ -159,8 +144,6 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 		options, err = managerconfig.Load(configFile, scheme)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load the config file: %w", err)
-			// setupLog.Error(err, "unable to load the config file")
-			// os.Exit(1)
 		}
 	} else {
 		options = ctrl.Options{Scheme: scheme}
@@ -169,7 +152,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	// force leader election
 	options.LeaderElection = true
 	if options.LeaderElectionID == "" {
-		options.LeaderElectionID = "configurator"
+		options.LeaderElectionID = "network-operator-configurator"
 	}
 
 	// force turn off metrics server

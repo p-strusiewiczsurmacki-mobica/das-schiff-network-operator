@@ -32,6 +32,8 @@ const (
 
 	invalidSuffix = "-invalid"
 	backupSuffix  = "-backup"
+
+	processName = "network-operator"
 )
 
 // ConfigReconciler is responsible for creating NodeConfig objects.
@@ -41,10 +43,13 @@ type ConfigReconciler struct {
 	debouncer *debounce.Debouncer
 	timeout   time.Duration
 	sem       *semaphore.Weighted
+	firstRun  bool
+
+	process *v1alpha1.NodeConfigProcess
 
 	currentConfigs map[string]v1alpha1.NodeConfig
 	invalidConfigs map[string]v1alpha1.NodeConfig
-	backupConfigs  map[string]v1alpha1.NodeConfig
+	BackupConfigs  map[string]v1alpha1.NodeConfig
 }
 
 type reconcileConfig struct {
@@ -71,7 +76,16 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 		sem:            semaphore.NewWeighted(limit),
 		currentConfigs: make(map[string]v1alpha1.NodeConfig),
 		invalidConfigs: make(map[string]v1alpha1.NodeConfig),
-		backupConfigs:  make(map[string]v1alpha1.NodeConfig),
+		BackupConfigs:  make(map[string]v1alpha1.NodeConfig),
+		firstRun:       true,
+		process: &v1alpha1.NodeConfigProcess{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: processName,
+			},
+			Spec: v1alpha1.NodeConfigProcessSpec{
+				State: "",
+			},
+		},
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -86,10 +100,19 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		Logger:           cr.logger,
 	}
 
+	if err := cr.getProcessState(ctx); err != nil {
+		return fmt.Errorf("error while getting NodeConfig process object: %w", err)
+	}
+
+	// check if former leader did not fail amid configuration process
+	if err := cr.validateFormerLeader(ctx); err != nil {
+		return fmt.Errorf("error validating former leader work")
+	}
+
 	// get all configuration objects
 	cfg, err := r.fetchConfigData(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("error fetching configuration details: %w", err)
 	}
 
 	// list all nodes in the cluster
@@ -103,9 +126,8 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error getting NodeConfigs from API server: %w", err)
 	}
 
-	// prepare map of NewConfigs (hostname is a map's key)
-	// we simply add l3Spec and taasSpec to *all* configs, as
-	// VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
+	// prepare map of NewConfigs (hostname is a map's key) - add l3Spec and taasSpec to *all* configs
+	// as VRFRouteConfigurationSpec (l3Spec) and RoutingTableSpec (taasSpec)
 	// are global resources (no node selectors are implemented) - TODO: Am I correct here?
 	newConfigs, err := cr.preparePerNodeConfigs(nodes, cfg)
 	if err != nil {
@@ -113,27 +135,30 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// check if no new configs result in known invalid config
-	// if so, abort deployment
 	if err := cr.checkInvalidConfigs(newConfigs); err != nil {
-		return err
+		return fmt.Errorf("error checking for invalid configs: %w", err)
 	}
 
-	// // create backup configs
-	// backupConfigs := createBackups(newConfigs, existingConfigs)
+	if err := cr.updateProcessState(ctx, statusProvisioning); err != nil {
+		return fmt.Errorf("error updating provisioning global state with value '%s': %w", statusProvisioned, err)
+	}
 
-	// deploy new configs
-	deployed, err := cr.processConfigs(ctx, newConfigs, true)
-
-	// if error occurred, revert changes
+	// deploy new configs, revert changes if error occurred
+	deployed, err := cr.processConfigs(ctx, newConfigs, true, true)
 	if err != nil {
 		if err := cr.revertChanges(ctx, deployed); err != nil {
 			return fmt.Errorf("error reverting changes: %w", err)
 		}
-
 		return fmt.Errorf("error deploying config: %w", err)
 	}
 
-	cr.logger.Info("successful deployment")
+	if err := cr.updateProcessState(ctx, statusProvisioned); err != nil {
+		return fmt.Errorf("error updating provisioning global state with value '%s': %w", statusProvisioned, err)
+	}
+
+	if len(deployed) > 0 {
+		cr.logger.Info("successful deployment")
+	}
 	return nil
 }
 
@@ -149,6 +174,7 @@ func getConfigsBySuffix(suffix string, configs map[string]v1alpha1.NodeConfig) m
 	return cfg
 }
 
+// getConfigs gets currently depoyed NodeeConfigs and stores them in ConfigReconciler object.
 func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
 	existingConfigs, err := cr.listConfigs(ctx)
 	if err != nil {
@@ -158,29 +184,30 @@ func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
 	// separate invalid configs, current configs and backups
 	// this also removes invalid and backup configs from the existing configs
 	cr.invalidConfigs = getConfigsBySuffix(invalidSuffix, existingConfigs)
-	cr.backupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
+	cr.BackupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
 	cr.currentConfigs = existingConfigs
 
 	return nil
 }
 
-func (cr *ConfigReconciler) revertChanges(ctx context.Context, deployed []string) error {
+// revertChanges restores backup NodeConfigs for selected nodes.
+func (cr *ConfigReconciler) revertChanges(ctx context.Context, nodes []string) error {
 	// refresh current configs
 	existingConfigs, listingError := cr.listConfigs(ctx)
 	if listingError != nil {
 		return fmt.Errorf("error listing configs: %w", listingError)
 	}
 
-	cr.backupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
+	cr.BackupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
 	cr.invalidConfigs = getConfigsBySuffix(invalidSuffix, existingConfigs)
 	cr.currentConfigs = existingConfigs
 
 	// select what should be restored
-	toRestore := cr.prepareBackups(deployed)
+	toRestore := cr.prepareBackups(nodes)
 
 	// restore configs from backup
 	// we dont want to backup invalid configs, therefore we are disabling backup
-	if _, restoreErr := cr.processConfigs(ctx, toRestore, false); restoreErr != nil {
+	if _, restoreErr := cr.processConfigs(ctx, toRestore, false, false); restoreErr != nil {
 		return fmt.Errorf("error restoring configuration: %w", restoreErr)
 	}
 
@@ -208,11 +235,11 @@ func (cr *ConfigReconciler) prepareBackups(toRestore []string) map[string]*v1alp
 	filteredBackups := map[string]*v1alpha1.NodeConfig{}
 	for _, name := range toRestore {
 		existing := cr.currentConfigs[name]
-		existing.Spec.Vrf = cr.backupConfigs[name].Spec.Vrf
-		existing.Spec.RoutingTable = cr.backupConfigs[name].Spec.RoutingTable
+		existing.Spec.Vrf = cr.BackupConfigs[name].Spec.Vrf
+		existing.Spec.RoutingTable = cr.BackupConfigs[name].Spec.RoutingTable
 
-		existing.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(cr.backupConfigs[name].Spec.Layer2))
-		copy(existing.Spec.Layer2, cr.backupConfigs[name].Spec.Layer2)
+		existing.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(cr.BackupConfigs[name].Spec.Layer2))
+		copy(existing.Spec.Layer2, cr.BackupConfigs[name].Spec.Layer2)
 
 		filteredBackups[name] = &existing
 	}
@@ -251,6 +278,28 @@ func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha
 	}
 
 	return configs, nil
+}
+
+func (cr *ConfigReconciler) getProcessState(ctx context.Context) error {
+	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(cr.process), cr.process); err != nil {
+		if apierrors.IsNotFound(err) {
+			cr.process.Spec.State = ""
+			if createErr := cr.client.Create(ctx, cr.process); createErr != nil {
+				return fmt.Errorf("error creating NodeConfigProcess: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("error getting NodeConfigProcess: %w", err)
+	}
+	return nil
+}
+
+func (cr *ConfigReconciler) updateProcessState(ctx context.Context, state string) error {
+	cr.process.Spec.State = state
+	if err := cr.client.Update(ctx, cr.process); err != nil {
+		return fmt.Errorf("error updateing NodeCOnfigProcess object: %w", err)
+	}
+	return nil
 }
 
 func (cr *ConfigReconciler) waitForConfigGet(ctx context.Context, instance *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool) error {
@@ -413,7 +462,7 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.CancelFunc,
 	wg *sync.WaitGroup, name string,
 	newConfigs map[string]*v1alpha1.NodeConfig,
-	processedNodes chan string, errCh chan error, backup bool) {
+	processedNodes chan string, errCh chan error, backup bool, createObject bool) {
 	defer wg.Done()
 
 	// acquire the semaphore lock with weight 1
@@ -455,7 +504,7 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned, true); err != nil {
-		if err := cr.invalidateConfig(ctx, newConfigs[name]); err != nil {
+		if err := cr.invalidateConfig(ctx, newConfigs[name], createObject); err != nil {
 			sendError("error invalidating config", err, errCh, cancel)
 			return
 		}
@@ -573,7 +622,7 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	return nil
 }
 
-func (cr *ConfigReconciler) invalidateConfig(ctx context.Context, config *v1alpha1.NodeConfig) error {
+func (cr *ConfigReconciler) invalidateConfig(ctx context.Context, config *v1alpha1.NodeConfig, createObject bool) error {
 	// if cannot get config status or status is 'provisoning' and request timed out
 	// let's assume that the node died and was unable to invalidate config
 	// so we will do that here instead
@@ -584,16 +633,18 @@ func (cr *ConfigReconciler) invalidateConfig(ctx context.Context, config *v1alph
 		}
 	}
 
-	// create invalid config object that will be later used to prevent configurator from redeploying invalid config
-	if err := cr.createInvalidConfig(ctx, config); err != nil {
-		return fmt.Errorf("error creating invalid config: %w", err)
+	if createObject {
+		// create invalid config object that will be later used to prevent configurator from redeploying invalid config
+		if err := cr.createInvalidConfig(ctx, config); err != nil {
+			return fmt.Errorf("error creating invalid config: %w", err)
+		}
 	}
 
 	return nil
 }
 
 func (cr *ConfigReconciler) processConfigs(ctx context.Context,
-	newConfigs map[string]*v1alpha1.NodeConfig, backup bool) ([]string, error) {
+	newConfigs map[string]*v1alpha1.NodeConfig, backup bool, createObject bool) ([]string, error) {
 	// process new NodeConfigs one by one
 	deployCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -604,7 +655,7 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	deployedNodes := make(chan string, len(newConfigs))
 	for name := range newConfigs {
 		wg.Add(1)
-		go cr.processConfig(deployCtx, cancel, &wg, name, newConfigs, deployedNodes, deploymentErr, backup)
+		go cr.processConfig(deployCtx, cancel, &wg, name, newConfigs, deployedNodes, deploymentErr, backup, createObject)
 	}
 
 	wg.Wait()
@@ -631,4 +682,25 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	}
 
 	return deployed, nil
+}
+
+func (cr *ConfigReconciler) validateFormerLeader(ctx context.Context) error {
+	if cr.firstRun && cr.process.Spec.State == statusProvisioning {
+		cr.logger.Info("previous leader did not finish configuration - reverting changes")
+		// get exisiting configs
+		if err := cr.getConfigs(ctx); err != nil {
+			return fmt.Errorf("error getting NodeConfigs from API server: %w", err)
+		}
+		nodes := []string{}
+		for name := range cr.BackupConfigs {
+			nodes = append(nodes, name)
+		}
+		if err := cr.revertChanges(ctx, nodes); err != nil {
+			return fmt.Errorf("error restoring backup NodeConfigs: %w", err)
+		}
+
+		cr.firstRun = false
+	}
+
+	return nil
 }
