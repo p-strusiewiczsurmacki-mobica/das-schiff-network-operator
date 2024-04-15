@@ -43,9 +43,10 @@ type ConfigReconciler struct {
 	debouncer *debounce.Debouncer
 	timeout   time.Duration
 	sem       *semaphore.Weighted
-	firstRun  bool
 
 	process *v1alpha1.NodeConfigProcess
+
+	OnLeaderElectionDone chan bool
 
 	currentConfigs map[string]v1alpha1.NodeConfig
 	invalidConfigs map[string]v1alpha1.NodeConfig
@@ -77,7 +78,6 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 		currentConfigs: make(map[string]v1alpha1.NodeConfig),
 		invalidConfigs: make(map[string]v1alpha1.NodeConfig),
 		BackupConfigs:  make(map[string]v1alpha1.NodeConfig),
-		firstRun:       true,
 		process: &v1alpha1.NodeConfigProcess{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: processName,
@@ -86,6 +86,7 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 				State: "",
 			},
 		},
+		OnLeaderElectionDone: make(chan bool),
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -93,21 +94,14 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 	return reconciler, nil
 }
 
-// nolint: gocritic
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
 		Logger:           cr.logger,
 	}
 
-	if err := cr.getProcessState(ctx); err != nil {
-		return fmt.Errorf("error while getting NodeConfig process object: %w", err)
-	}
-
-	// check if former leader did not fail amid configuration process
-	if err := cr.validateFormerLeader(ctx); err != nil {
-		return fmt.Errorf("error validating former leader work")
-	}
+	// wait for OnLeaderElectionEvent runnable to finish
+	<-cr.OnLeaderElectionDone
 
 	// get all configuration objects
 	cfg, err := r.fetchConfigData(ctx)
@@ -280,7 +274,7 @@ func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha
 	return configs, nil
 }
 
-func (cr *ConfigReconciler) getProcessState(ctx context.Context) error {
+func (cr *ConfigReconciler) GetProcessState(ctx context.Context) error {
 	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(cr.process), cr.process); err != nil {
 		if apierrors.IsNotFound(err) {
 			cr.process.Spec.State = ""
@@ -684,8 +678,8 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	return deployed, nil
 }
 
-func (cr *ConfigReconciler) validateFormerLeader(ctx context.Context) error {
-	if cr.firstRun && cr.process.Spec.State == statusProvisioning {
+func (cr *ConfigReconciler) ValidateFormerLeader(ctx context.Context) error {
+	if cr.process.Spec.State == statusProvisioning {
 		cr.logger.Info("previous leader did not finish configuration - reverting changes")
 		// get exisiting configs
 		if err := cr.getConfigs(ctx); err != nil {
@@ -698,8 +692,6 @@ func (cr *ConfigReconciler) validateFormerLeader(ctx context.Context) error {
 		if err := cr.revertChanges(ctx, nodes); err != nil {
 			return fmt.Errorf("error restoring backup NodeConfigs: %w", err)
 		}
-
-		cr.firstRun = false
 	}
 
 	return nil
