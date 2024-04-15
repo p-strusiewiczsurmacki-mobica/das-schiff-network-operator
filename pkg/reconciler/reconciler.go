@@ -36,6 +36,7 @@ type Reconciler struct {
 	anycastTracker *anycast.Tracker
 	config         *config.Config
 	logger         logr.Logger
+	adapter        Adapter
 	healthChecker  *healthcheck.HealthChecker
 	nodeConfig     *v1alpha1.NodeConfig
 	nodeConfigPath string
@@ -58,6 +59,7 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 		anycastTracker: anycastTracker,
 		logger:         logger,
 		nodeConfigPath: nodeConfigPath,
+		adapter:        adapter,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultNodeDebounceTime, logger)
@@ -96,17 +98,18 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 	return reconciler, nil
 }
 
-func (reconciler *Reconciler) Reconcile(ctx context.Context) {
-	reconciler.debouncer.Debounce(ctx)
+func (r *Reconciler) Reconcile(ctx context.Context) {
+	r.debouncer.Debounce(ctx)
 }
 
-func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
-	r := &reconcile{
+func (r *Reconciler) reconcileDebounced(ctx context.Context) error {
+	reconciler := &reconcile{
 		Reconciler: reconciler,
 		Logger:     reconciler.logger,
 	}
 
-	if err := r.config.ReloadConfig(); err != nil {
+	reconciler.Logger.Info("Reloading config")
+	if err := reconciler.adapter.getConfig().ReloadConfig(); err != nil {
 		return fmt.Errorf("error reloading network-operator config: %w", err)
 	}
 
@@ -126,9 +129,9 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// reconcile config
-	if err = doReconciliation(r, cfg); err != nil {
+	if err = doReconciliation(reconciler, cfg); err != nil {
 		// if reconciliation failed set NodeConfig's status as invalid and restore last known working config
-		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
+		if err := reconciler.invalidateAndRestore(ctx, cfg); err != nil {
 			return fmt.Errorf("reconciler restoring config: %w", err)
 		}
 
@@ -136,7 +139,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// check if node is healthly after reconciliation
-	if err := reconciler.checkHealth(ctx); err != nil {
+	if err := r.checkHealth(ctx); err != nil {
 		// if node is not healthly set NodeConfig's status as invalid and restore last known working config
 		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
 			return fmt.Errorf("reconciler restoring config: %w", err)
@@ -147,12 +150,12 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 
 	// set config status as provisioned (valid)
 	cfg.Status.ConfigStatus = nodeconfig.StatusProvisioned
-	if err = r.client.Status().Update(ctx, cfg); err != nil {
+	if err = reconciler.client.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 
 	// replace in-memory working config and store it on the disk
-	reconciler.nodeConfig = cfg
+	r.nodeConfig = cfg
 	if err = storeNodeConfig(cfg, reconciler.nodeConfigPath); err != nil {
 		return fmt.Errorf("error saving NodeConfig status: %w", err)
 	}
@@ -180,10 +183,10 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 	l2vnis := nodeCfg.Spec.Layer2
 	taas := nodeCfg.Spec.RoutingTable
 
-	if err := r.reconcileLayer3(l3vnis, taas); err != nil {
+	if err := r.adapter.reconcileLayer3(l3vnis, taas); err != nil {
 		return err
 	}
-	if err := r.reconcileLayer2(l2vnis); err != nil {
+	if err := r.adapter.reconcileLayer2(l2vnis); err != nil {
 		return err
 	}
 
