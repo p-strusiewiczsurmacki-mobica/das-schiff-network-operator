@@ -94,6 +94,29 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 	return reconciler, nil
 }
 
+func (cr *ConfigReconciler) ValidateFormerLeader(ctx context.Context) error {
+	if err := cr.getProcessState(ctx); err != nil {
+		return fmt.Errorf("error while getting NodeConfig process object: %w", err)
+	}
+
+	if cr.process.Spec.State == statusProvisioning {
+		cr.logger.Info("previous leader did not finish configuration - reverting changes")
+		// get exisiting configs
+		if err := cr.getConfigs(ctx); err != nil {
+			return fmt.Errorf("error getting NodeConfigs from API server: %w", err)
+		}
+		nodes := []string{}
+		for name := range cr.backupConfigs {
+			nodes = append(nodes, name)
+		}
+		if err := cr.revertChanges(ctx, nodes); err != nil {
+			return fmt.Errorf("error restoring backup NodeConfigs: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
@@ -274,7 +297,7 @@ func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha
 	return configs, nil
 }
 
-func (cr *ConfigReconciler) GetProcessState(ctx context.Context) error {
+func (cr *ConfigReconciler) getProcessState(ctx context.Context) error {
 	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(cr.process), cr.process); err != nil {
 		if apierrors.IsNotFound(err) {
 			cr.process.Spec.State = ""
@@ -676,23 +699,4 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	}
 
 	return deployed, nil
-}
-
-func (cr *ConfigReconciler) ValidateFormerLeader(ctx context.Context) error {
-	if cr.process.Spec.State == statusProvisioning {
-		cr.logger.Info("previous leader did not finish configuration - reverting changes")
-		// get exisiting configs
-		if err := cr.getConfigs(ctx); err != nil {
-			return fmt.Errorf("error getting NodeConfigs from API server: %w", err)
-		}
-		nodes := []string{}
-		for name := range cr.backupConfigs {
-			nodes = append(nodes, name)
-		}
-		if err := cr.revertChanges(ctx, nodes); err != nil {
-			return fmt.Errorf("error restoring backup NodeConfigs: %w", err)
-		}
-	}
-
-	return nil
 }

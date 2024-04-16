@@ -176,10 +176,6 @@ func (*OnLeaderElectionEvent) NeedLeaderElection() bool {
 }
 
 func (e *OnLeaderElectionEvent) Start(ctx context.Context) error {
-	if err := e.cr.GetProcessState(ctx); err != nil {
-		return fmt.Errorf("error while getting NodeConfig process object: %w", err)
-	}
-
 	// check if former leader did not fail amid configuration process
 	if err := e.cr.ValidateFormerLeader(ctx); err != nil {
 		return fmt.Errorf("error validating former leader work")
