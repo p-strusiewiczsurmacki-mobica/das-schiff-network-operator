@@ -55,19 +55,13 @@ func init() {
 }
 
 func main() {
-	var onlyBPFMode bool
 	var configFile string
-	var interfacePrefix string
 	var timeout string
 	var limit int64
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
 			"Command-line flags override configuration from this file.")
-	flag.BoolVar(&onlyBPFMode, "only-attach-bpf", false,
-		"Only attach BPF to specified interfaces in config. This will not start any reconciliation. Perfect for masters.")
-	flag.StringVar(&interfacePrefix, "macvlan-interface-prefix", "",
-		"Interface prefix for bridge devices for MACVlan sync.")
 	flag.StringVar(&timeout, "timeout", reconciler.DefaultTimeout,
 		"Timeout for Kubernetes API connections (default: 60s).")
 	flag.Int64Var(&limit, "update-limit", reconciler.DefaultNodeUpdateLimit,
