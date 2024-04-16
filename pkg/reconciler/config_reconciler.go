@@ -65,6 +65,11 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
 func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string, limit int64) (*ConfigReconciler, error) {
+	// TODO: should limit=0 disable gradual roullout?
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit cannot be less than 1")
+	}
+
 	t, err := time.ParseDuration(timeout)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing timeout %s: %w", timeout, err)
@@ -191,7 +196,7 @@ func getConfigsBySuffix(suffix string, configs map[string]v1alpha1.NodeConfig) m
 	return cfg
 }
 
-// getConfigs gets currently depoyed NodeeConfigs and stores them in ConfigReconciler object.
+// getConfigs gets currently deployed NodeConfigs and stores them in ConfigReconciler object.
 func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
 	existingConfigs, err := cr.listConfigs(ctx)
 	if err != nil {
@@ -506,10 +511,14 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 	// this will be later used for reverting changes if any node reports an error
 	processedNodes <- name
 
+	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(newConfigs[name]), newConfigs[name]); err != nil {
+		sendError("error getting NodeConfig", err, errCh, cancel)
+		return
+	}
 	// set the status to provisioning
 	newConfigs[name].Status.ConfigStatus = statusProvisioning
 	if err := cr.client.Status().Update(ctx, newConfigs[name]); err != nil {
-		sendError("error creating NodeConfig status", err, errCh, cancel)
+		sendError("error updating NodeConfig status", err, errCh, cancel)
 		return
 	}
 
@@ -680,9 +689,16 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	close(deployedNodes)
 
 	errorsOccurred := false
+	var batchErr error
 	for err := range deploymentErr {
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
+				if batchErr == nil {
+					batchErr = fmt.Errorf("%w", err)
+				} else {
+					batchErr = fmt.Errorf("%w; %w;", batchErr, err)
+				}
+
 				cr.logger.Error(err, "error deploying config")
 			}
 			errorsOccurred = true
@@ -695,7 +711,7 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	}
 
 	if errorsOccurred {
-		return deployed, fmt.Errorf("errors occurred while deploying config")
+		return deployed, fmt.Errorf("errors occurred while deploying config: %w", batchErr)
 	}
 
 	return deployed, nil
