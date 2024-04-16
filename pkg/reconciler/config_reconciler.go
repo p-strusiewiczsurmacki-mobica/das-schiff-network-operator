@@ -50,7 +50,7 @@ type ConfigReconciler struct {
 
 	currentConfigs map[string]v1alpha1.NodeConfig
 	invalidConfigs map[string]v1alpha1.NodeConfig
-	BackupConfigs  map[string]v1alpha1.NodeConfig
+	backupConfigs  map[string]v1alpha1.NodeConfig
 }
 
 type reconcileConfig struct {
@@ -77,7 +77,7 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 		sem:            semaphore.NewWeighted(limit),
 		currentConfigs: make(map[string]v1alpha1.NodeConfig),
 		invalidConfigs: make(map[string]v1alpha1.NodeConfig),
-		BackupConfigs:  make(map[string]v1alpha1.NodeConfig),
+		backupConfigs:  make(map[string]v1alpha1.NodeConfig),
 		process: &v1alpha1.NodeConfigProcess{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: processName,
@@ -178,7 +178,7 @@ func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
 	// separate invalid configs, current configs and backups
 	// this also removes invalid and backup configs from the existing configs
 	cr.invalidConfigs = getConfigsBySuffix(invalidSuffix, existingConfigs)
-	cr.BackupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
+	cr.backupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
 	cr.currentConfigs = existingConfigs
 
 	return nil
@@ -192,7 +192,7 @@ func (cr *ConfigReconciler) revertChanges(ctx context.Context, nodes []string) e
 		return fmt.Errorf("error listing configs: %w", listingError)
 	}
 
-	cr.BackupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
+	cr.backupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
 	cr.invalidConfigs = getConfigsBySuffix(invalidSuffix, existingConfigs)
 	cr.currentConfigs = existingConfigs
 
@@ -229,11 +229,11 @@ func (cr *ConfigReconciler) prepareBackups(toRestore []string) map[string]*v1alp
 	filteredBackups := map[string]*v1alpha1.NodeConfig{}
 	for _, name := range toRestore {
 		existing := cr.currentConfigs[name]
-		existing.Spec.Vrf = cr.BackupConfigs[name].Spec.Vrf
-		existing.Spec.RoutingTable = cr.BackupConfigs[name].Spec.RoutingTable
+		existing.Spec.Vrf = cr.backupConfigs[name].Spec.Vrf
+		existing.Spec.RoutingTable = cr.backupConfigs[name].Spec.RoutingTable
 
-		existing.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(cr.BackupConfigs[name].Spec.Layer2))
-		copy(existing.Spec.Layer2, cr.BackupConfigs[name].Spec.Layer2)
+		existing.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(cr.backupConfigs[name].Spec.Layer2))
+		copy(existing.Spec.Layer2, cr.backupConfigs[name].Spec.Layer2)
 
 		filteredBackups[name] = &existing
 	}
@@ -686,7 +686,7 @@ func (cr *ConfigReconciler) ValidateFormerLeader(ctx context.Context) error {
 			return fmt.Errorf("error getting NodeConfigs from API server: %w", err)
 		}
 		nodes := []string{}
-		for name := range cr.BackupConfigs {
+		for name := range cr.backupConfigs {
 			nodes = append(nodes, name)
 		}
 		if err := cr.revertChanges(ctx, nodes); err != nil {
