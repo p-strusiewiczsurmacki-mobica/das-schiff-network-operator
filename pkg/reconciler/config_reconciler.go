@@ -319,7 +319,7 @@ func (cr *ConfigReconciler) getProcessState(ctx context.Context) error {
 func (cr *ConfigReconciler) updateProcessState(ctx context.Context, state string) error {
 	cr.process.Spec.State = state
 	if err := cr.client.Update(ctx, cr.process); err != nil {
-		return fmt.Errorf("error updating NodeConfigProcess object: %w", err)
+		return fmt.Errorf("error updateing NodeCOnfigProcess object: %w", err)
 	}
 	return nil
 }
@@ -575,16 +575,22 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.N
 	return true, nil
 }
 
+func copyNodeConfig(src, dst *v1alpha1.NodeConfig, name string) {
+	dst.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
+	dst.Spec.Vrf = make([]v1alpha1.VRFRouteConfigurationSpec, len(src.Spec.Vrf))
+	dst.Spec.RoutingTable = make([]v1alpha1.RoutingTableSpec, len(src.Spec.RoutingTable))
+	copy(dst.Spec.Layer2, src.Spec.Layer2)
+	copy(dst.Spec.Vrf, src.Spec.Vrf)
+	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
+	dst.Name = name
+}
+
 func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.NodeConfig) error {
 	backupName := config.Name + backupSuffix
-	backup := &v1alpha1.NodeConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: backupName,
-		},
-	}
+	backup := &v1alpha1.NodeConfig{}
 
 	createNew := false
-	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(backup), backup); err != nil {
+	if err := cr.client.Get(ctx, types.NamespacedName{Name: backupName}, backup); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("error getting backup config %s: %w", backupName, err)
 		}
@@ -592,18 +598,18 @@ func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.N
 	}
 
 	if exisitingCfg, exists := cr.currentConfigs[config.Name]; exists {
-		backup = backup.CopyFrom(&exisitingCfg)
+		copyNodeConfig(&exisitingCfg, backup, backupName)
 	} else {
-		backup = backup.CopyFrom(v1alpha1.NewEmptyConfig(backupName))
+		copyNodeConfig(v1alpha1.NewEmptyConfig(backupName), backup, backupName)
 	}
 
 	if createNew {
 		if err := cr.client.Create(ctx, backup); err != nil {
-			return fmt.Errorf("create call error for config %s: %w", backupName, err)
+			return fmt.Errorf("error creating backup config: %w", err)
 		}
 	} else {
 		if err := cr.client.Update(ctx, backup); err != nil {
-			return fmt.Errorf("update call error for config %s: %w", backupName, err)
+			return fmt.Errorf("error updating backup config: %w", err)
 		}
 	}
 
@@ -618,13 +624,13 @@ func sendError(text string, err error, errCh chan error, cancel context.CancelFu
 // Creates invalid config object named <nodename>-invalid.
 func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInvalidate *v1alpha1.NodeConfig) error {
 	invalidName := fmt.Sprintf("%s%s", configToInvalidate.Name, invalidSuffix)
-	invalidConfig := &v1alpha1.NodeConfig{}
+	invalidConfig := v1alpha1.NodeConfig{}
 
-	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, invalidConfig); err != nil {
+	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, &invalidConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			// invalid config for the node does not exist - create new
-			invalidConfig = invalidConfig.CopyFrom(configToInvalidate)
-			if err = cr.client.Create(ctx, invalidConfig); err != nil {
+			copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
+			if err = cr.client.Create(ctx, &invalidConfig); err != nil {
 				return fmt.Errorf("cannot store invalid config for node %s: %w", configToInvalidate.Name, err)
 			}
 			return nil
@@ -634,8 +640,8 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	}
 
 	// invalid config for the node exist - update
-	invalidConfig = invalidConfig.CopyFrom(configToInvalidate)
-	if err := cr.client.Update(ctx, invalidConfig); err != nil {
+	copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
+	if err := cr.client.Update(ctx, &invalidConfig); err != nil {
 		return fmt.Errorf("error updating invalid config for node %s: %w", configToInvalidate.Name, err)
 	}
 

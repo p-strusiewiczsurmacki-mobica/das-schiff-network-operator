@@ -75,16 +75,6 @@ func NewEmptyConfig(name string) *NodeConfig {
 	}
 }
 
-func (nc *NodeConfig) CopyFrom(src *NodeConfig) *NodeConfig {
-	nc.Spec.Layer2 = make([]Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
-	nc.Spec.Vrf = make([]VRFRouteConfigurationSpec, len(src.Spec.Vrf))
-	nc.Spec.RoutingTable = make([]RoutingTableSpec, len(src.Spec.RoutingTable))
-	copy(nc.Spec.Layer2, src.Spec.Layer2)
-	copy(nc.Spec.Vrf, src.Spec.Vrf)
-	copy(nc.Spec.RoutingTable, src.Spec.RoutingTable)
-	return nc
-}
-
 func init() {
 	SchemeBuilder.Register(&NodeConfig{}, &NodeConfigList{})
 }
