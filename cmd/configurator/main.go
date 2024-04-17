@@ -161,21 +161,21 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	return &options, nil
 }
 
-type OnLeaderElectionEvent struct {
+type onLeaderElectionEvent struct {
 	cr *reconciler.ConfigReconciler
 }
 
-func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler) *OnLeaderElectionEvent {
-	return &OnLeaderElectionEvent{
+func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler) *onLeaderElectionEvent {
+	return &onLeaderElectionEvent{
 		cr: cr,
 	}
 }
 
-func (*OnLeaderElectionEvent) NeedLeaderElection() bool {
+func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 	return true
 }
 
-func (e *OnLeaderElectionEvent) Start(ctx context.Context) error {
+func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	// check if former leader did not fail amid configuration process
 	if err := e.cr.ValidateFormerLeader(ctx); err != nil {
 		return fmt.Errorf("error validating former leader work")
