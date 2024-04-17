@@ -163,6 +163,15 @@ func (hc *HealthChecker) CheckReachability() error {
 	return nil
 }
 
+// CheckAPIServer checks if Kubernetes API Server is reachable.
+func (hc *HealthChecker) CheckAPIServer(ctx context.Context) error {
+	pods := &corev1.PodList{}
+	if err := hc.client.List(ctx, pods); err != nil {
+		return fmt.Errorf("error listing pods: %w", err)
+	}
+	return nil
+}
+
 func (hc *HealthChecker) checkReachabilityItem(r netReachabilityItem) error {
 	target := r.Host + ":" + strconv.Itoa(r.Port)
 	conn, err := hc.toolkit.tcpDialer.Dial("tcp", target)

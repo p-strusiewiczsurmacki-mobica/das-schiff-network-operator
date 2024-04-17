@@ -240,6 +240,9 @@ func (reconciler *Reconciler) checkHealth(ctx context.Context) error {
 	if err := reconciler.healthChecker.CheckReachability(); err != nil {
 		return fmt.Errorf("error checking network reachability: %w", err)
 	}
+	if err := reconciler.healthChecker.CheckAPIServer(ctx); err != nil {
+		return fmt.Errorf("error checking api-server reachability: %w", err)
+	}
 	if !reconciler.healthChecker.TaintsRemoved() {
 		if err := reconciler.healthChecker.RemoveTaints(ctx); err != nil {
 			return fmt.Errorf("error removing taint from the node: %w", err)
