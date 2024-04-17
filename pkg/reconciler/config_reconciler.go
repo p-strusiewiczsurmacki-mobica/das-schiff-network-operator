@@ -319,7 +319,7 @@ func (cr *ConfigReconciler) getProcessState(ctx context.Context) error {
 func (cr *ConfigReconciler) updateProcessState(ctx context.Context, state string) error {
 	cr.process.Spec.State = state
 	if err := cr.client.Update(ctx, cr.process); err != nil {
-		return fmt.Errorf("error updateing NodeCOnfigProcess object: %w", err)
+		return fmt.Errorf("error updating NodeConfigProcess object: %w", err)
 	}
 	return nil
 }
@@ -588,9 +588,9 @@ func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.N
 	}
 
 	if exisitingCfg, exists := cr.currentConfigs[config.Name]; exists {
-		backup = exisitingCfg.CopyWithRename(backupName)
+		backup = backup.CopyFrom(&exisitingCfg)
 	} else {
-		backup = v1alpha1.NewEmptyConfig(backupName).CopyWithRename(backupName)
+		backup = backup.CopyFrom(v1alpha1.NewEmptyConfig(backupName))
 	}
 
 	if createNew {
@@ -599,7 +599,7 @@ func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.N
 		}
 	} else {
 		if err := cr.client.Update(ctx, backup); err != nil {
-			return fmt.Errorf("error updating backup config: %w", err)
+			return fmt.Errorf("error updating backup config %s: %w", backupName, err)
 		}
 	}
 
@@ -614,13 +614,13 @@ func sendError(text string, err error, errCh chan error, cancel context.CancelFu
 // Creates invalid config object named <nodename>-invalid.
 func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInvalidate *v1alpha1.NodeConfig) error {
 	invalidName := fmt.Sprintf("%s%s", configToInvalidate.Name, invalidSuffix)
-	invalidConfig := v1alpha1.NodeConfig{}
+	invalidConfig := &v1alpha1.NodeConfig{}
 
-	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, &invalidConfig); err != nil {
+	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, invalidConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			// invalid config for the node does not exist - create new
-			invalidConfig = *configToInvalidate.CopyWithRename(invalidName)
-			if err = cr.client.Create(ctx, &invalidConfig); err != nil {
+			invalidConfig = invalidConfig.CopyFrom(configToInvalidate)
+			if err = cr.client.Create(ctx, invalidConfig); err != nil {
 				return fmt.Errorf("cannot store invalid config for node %s: %w", configToInvalidate.Name, err)
 			}
 			return nil
@@ -630,8 +630,8 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	}
 
 	// invalid config for the node exist - update
-	invalidConfig = *configToInvalidate.CopyWithRename(invalidName)
-	if err := cr.client.Update(ctx, &invalidConfig); err != nil {
+	invalidConfig = invalidConfig.CopyFrom(configToInvalidate)
+	if err := cr.client.Update(ctx, invalidConfig); err != nil {
 		return fmt.Errorf("error updating invalid config for node %s: %w", configToInvalidate.Name, err)
 	}
 
