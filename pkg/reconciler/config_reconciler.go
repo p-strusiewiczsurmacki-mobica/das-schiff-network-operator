@@ -577,10 +577,14 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.N
 
 func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.NodeConfig) error {
 	backupName := config.Name + backupSuffix
-	backup := &v1alpha1.NodeConfig{}
+	backup := &v1alpha1.NodeConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: backupName,
+		},
+	}
 
 	createNew := false
-	if err := cr.client.Get(ctx, types.NamespacedName{Name: backupName}, backup); err != nil {
+	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(backup), backup); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("error getting backup config %s: %w", backupName, err)
 		}
