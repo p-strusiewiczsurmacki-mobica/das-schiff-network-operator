@@ -599,11 +599,11 @@ func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.N
 
 	if createNew {
 		if err := cr.client.Create(ctx, backup); err != nil {
-			return fmt.Errorf("error creating backup config: %w", err)
+			return fmt.Errorf("create call error for config %s: %w", backupName, err)
 		}
 	} else {
 		if err := cr.client.Update(ctx, backup); err != nil {
-			return fmt.Errorf("error updating backup config %s: %w", backupName, err)
+			return fmt.Errorf("update call error for config %s: %w", backupName, err)
 		}
 	}
 
