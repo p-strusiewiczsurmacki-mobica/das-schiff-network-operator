@@ -575,16 +575,6 @@ func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.N
 	return true, nil
 }
 
-func copyNodeConfig(src, dst *v1alpha1.NodeConfig, name string) {
-	dst.Spec.Layer2 = make([]v1alpha1.Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
-	dst.Spec.Vrf = make([]v1alpha1.VRFRouteConfigurationSpec, len(src.Spec.Vrf))
-	dst.Spec.RoutingTable = make([]v1alpha1.RoutingTableSpec, len(src.Spec.RoutingTable))
-	copy(dst.Spec.Layer2, src.Spec.Layer2)
-	copy(dst.Spec.Vrf, src.Spec.Vrf)
-	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
-	dst.Name = name
-}
-
 func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.NodeConfig) error {
 	backupName := config.Name + backupSuffix
 	backup := &v1alpha1.NodeConfig{}
@@ -598,9 +588,9 @@ func (cr *ConfigReconciler) createBackup(ctx context.Context, config *v1alpha1.N
 	}
 
 	if exisitingCfg, exists := cr.currentConfigs[config.Name]; exists {
-		copyNodeConfig(&exisitingCfg, backup, backupName)
+		backup = exisitingCfg.CopyWithRename(backupName)
 	} else {
-		copyNodeConfig(v1alpha1.NewEmptyConfig(backupName), backup, backupName)
+		backup = v1alpha1.NewEmptyConfig(backupName).CopyWithRename(backupName)
 	}
 
 	if createNew {
@@ -629,7 +619,7 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	if err := cr.client.Get(ctx, types.NamespacedName{Name: invalidName, Namespace: configToInvalidate.Namespace}, &invalidConfig); err != nil {
 		if apierrors.IsNotFound(err) {
 			// invalid config for the node does not exist - create new
-			copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
+			invalidConfig = *configToInvalidate.CopyWithRename(invalidName)
 			if err = cr.client.Create(ctx, &invalidConfig); err != nil {
 				return fmt.Errorf("cannot store invalid config for node %s: %w", configToInvalidate.Name, err)
 			}
@@ -640,7 +630,7 @@ func (cr *ConfigReconciler) createInvalidConfig(ctx context.Context, configToInv
 	}
 
 	// invalid config for the node exist - update
-	copyNodeConfig(configToInvalidate, &invalidConfig, invalidName)
+	invalidConfig = *configToInvalidate.CopyWithRename(invalidName)
 	if err := cr.client.Update(ctx, &invalidConfig); err != nil {
 		return fmt.Errorf("error updating invalid config for node %s: %w", configToInvalidate.Name, err)
 	}
