@@ -10,7 +10,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
-	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -130,8 +129,6 @@ var (
 	fakeNodeConfig        *v1alpha1.NodeConfigList
 	fakeNodeConfigInvalid *v1alpha1.NodeConfigList
 	fakeNodes             *corev1.NodeList
-	tmpPath               string
-	ctrl                  *gomock.Controller
 	s                     *runtime.Scheme
 )
 
@@ -152,9 +149,6 @@ var _ = BeforeSuite(func() {
 
 func TestConfigReconciler(t *testing.T) {
 	RegisterFailHandler(Fail)
-	tmpPath = t.TempDir()
-	ctrl = gomock.NewController(t)
-	defer ctrl.Finish()
 	s = runtime.NewScheme()
 	err := v1alpha1.AddToScheme(s)
 	Expect(err).ToNot(HaveOccurred())
@@ -164,7 +158,7 @@ func TestConfigReconciler(t *testing.T) {
 		"ConfigReconciler Suite")
 }
 
-var _ = Describe("HealthCheck", func() {
+var _ = Describe("ConfigReconciler", func() {
 	Context("NewConfigReconciler() should", func() {
 		c := fake.NewClientBuilder().Build()
 		It("return error if cannot parse time duration", func() {
