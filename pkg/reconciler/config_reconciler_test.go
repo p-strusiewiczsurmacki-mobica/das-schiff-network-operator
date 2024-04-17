@@ -341,7 +341,7 @@ func testReconciler(expectedStatus string) error {
 		WithRuntimeObjects(fakeProcess, fakeNodeConfig, fakeNodes).
 		WithStatusSubresource(&fakeNodeConfig.Items[0]).
 		Build()
-	r, err := NewConfigReconciler(c, logr.Logger{}, "1s", 1)
+	r, err := NewConfigReconciler(c, logr.Logger{}, "5s", 1)
 	Expect(err).ToNot(HaveOccurred())
 
 	ctx := context.TODO()
