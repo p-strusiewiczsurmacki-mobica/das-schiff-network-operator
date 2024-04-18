@@ -75,6 +75,16 @@ func NewEmptyConfig(name string) *NodeConfig {
 	}
 }
 
+func CopyNodeConfig(src, dst *NodeConfig, name string) {
+	dst.Spec.Layer2 = make([]Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
+	dst.Spec.Vrf = make([]VRFRouteConfigurationSpec, len(src.Spec.Vrf))
+	dst.Spec.RoutingTable = make([]RoutingTableSpec, len(src.Spec.RoutingTable))
+	copy(dst.Spec.Layer2, src.Spec.Layer2)
+	copy(dst.Spec.Vrf, src.Spec.Vrf)
+	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
+	dst.Name = name
+}
+
 func init() {
 	SchemeBuilder.Register(&NodeConfig{}, &NodeConfigList{})
 }
