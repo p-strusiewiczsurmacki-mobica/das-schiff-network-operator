@@ -1,5 +1,5 @@
 /*
-Copyright 2022.
+Copyright 2024.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,20 +19,19 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"time"
 
-	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-const requeueTime = 10 * time.Minute
-
-// Layer2NetworkConfigurationReconciler reconciles a Layer2NetworkConfiguration object.
-type Layer2NetworkConfigurationReconciler struct {
+// EventReconciler reconciles a Layer2NetworkConfiguration object.
+type EventReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -48,8 +47,10 @@ type Layer2NetworkConfigurationReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
-func (r *Layer2NetworkConfigurationReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+func (r *EventReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
+	l := log.FromContext(ctx)
+
+	l.Info("event occurred in EventReconciler")
 
 	r.Reconciler.Reconcile(ctx)
 
@@ -57,9 +58,9 @@ func (r *Layer2NetworkConfigurationReconciler) Reconcile(ctx context.Context, _ 
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *Layer2NetworkConfigurationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *EventReconciler) SetupWithManager(mgr ctrl.Manager, events chan event.GenericEvent) error {
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.Layer2NetworkConfiguration{}).
+		WatchesRawSource(&source.Channel{Source: events}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
