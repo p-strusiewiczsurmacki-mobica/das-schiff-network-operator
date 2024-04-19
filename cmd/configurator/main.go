@@ -86,13 +86,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	cr, err := setupReconcilers(mgr, timeout, limit)
+	cr, nr, err := setupReconcilers(mgr, timeout, limit)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
 	}
 
-	if err := mgr.Add(newOnLeaderElectionEvent(cr)); err != nil {
+	if err := mgr.Add(newOnLeaderElectionEvent(cr, nr)); err != nil {
 		setupLog.Error(err, "unable to create OnLeadeElectionEvent")
 		os.Exit(1)
 	}
@@ -104,15 +104,15 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
 	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger(), timeout)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create node reconciler: %w", err)
+		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
 	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, limit, nr)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
+		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
@@ -120,7 +120,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: r,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
+		return nil, nil, fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
 	}
 
 	if err = (&controllers.Layer2NetworkConfigurationReconciler{
@@ -128,7 +128,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: r,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
+		return nil, nil, fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
 	}
 
 	if err = (&controllers.RoutingTableReconciler{
@@ -136,7 +136,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: r,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
 	if err = (&controllers.NodeReconciler{
@@ -144,7 +144,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: nr,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
 	if err = (&controllers.EventReconciler{
@@ -152,10 +152,10 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: r,
 	}).SetupWithManager(mgr, nr.Events); err != nil {
-		return nil, fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
+		return nil, nil, fmt.Errorf("unable to create Event controller: %w", err)
 	}
 
-	return r, nil
+	return r, nr, nil
 }
 
 func setMangerOptions(configFile string) (*manager.Options, error) {
@@ -187,9 +187,10 @@ type onLeaderElectionEvent struct {
 	nr *reconciler.NodeReconciler
 }
 
-func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler) *onLeaderElectionEvent {
+func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler) *onLeaderElectionEvent {
 	return &onLeaderElectionEvent{
 		cr: cr,
+		nr: nr,
 	}
 }
 
