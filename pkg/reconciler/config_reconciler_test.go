@@ -162,22 +162,22 @@ var _ = Describe("ConfigReconciler", func() {
 	Context("NewConfigReconciler() should", func() {
 		c := fake.NewClientBuilder().Build()
 		It("return error if cannot parse time duration", func() {
-			_, err := NewConfigReconciler(c, logr.Logger{}, "invalidTimeout", 1)
+			_, err := NewConfigReconciler(c, logr.Logger{}, "invalidTimeout", 1, &NodeReconciler{})
 			Expect(err).To(HaveOccurred())
 		})
 		It("return error if invalid limit is provided", func() {
-			_, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, -1)
+			_, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, -1, &NodeReconciler{})
 			Expect(err).To(HaveOccurred())
 		})
 		It("return no error", func() {
-			_, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+			_, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, &NodeReconciler{})
 			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 	Context("ValidateFormerLeader() should", func() {
 		It("return no error if process status does not yet exist", func() {
 			c := fake.NewClientBuilder().WithScheme(s).Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, &NodeReconciler{})
 			Expect(err).ToNot(HaveOccurred())
 			err = r.ValidateFormerLeader(context.TODO())
 			Expect(err).ToNot(HaveOccurred())
@@ -185,7 +185,7 @@ var _ = Describe("ConfigReconciler", func() {
 		It("return no error if backup config is equal to current config", func() {
 			fakeProcess.Items[0].Spec.State = statusProvisioning
 			c := fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(fakeProcess, fakeNodeConfig).Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, &NodeReconciler{})
 			Expect(err).ToNot(HaveOccurred())
 			err = r.ValidateFormerLeader(context.TODO())
 			Expect(err).ToNot(HaveOccurred())
@@ -200,7 +200,7 @@ var _ = Describe("ConfigReconciler", func() {
 			c := fake.NewClientBuilder().WithScheme(s).
 				WithRuntimeObjects(fakeProcess, fakeNodeConfig).
 				Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, &NodeReconciler{})
 			Expect(err).ToNot(HaveOccurred())
 			err = r.ValidateFormerLeader(context.TODO())
 			Expect(err).To(HaveOccurred())
@@ -216,8 +216,13 @@ var _ = Describe("ConfigReconciler", func() {
 				WithRuntimeObjects(fakeProcess, fakeNodeConfig).
 				WithStatusSubresource(&fakeNodeConfig.Items[0]).
 				Build()
-			// set 1ms timeout
-			r, err := NewConfigReconciler(c, logr.Logger{}, "1ms", 1)
+
+			nr, err := NewNodeReconciler(c, logr.Logger{}, "10s")
+			Expect(err).ToNot(HaveOccurred())
+
+			nr.nodes[fakeNodes.Items[0].Name] = fakeNodes.Items[0]
+			// set 1ns timeout
+			r, err := NewConfigReconciler(c, logr.Logger{}, "1ns", 1, nr)
 			Expect(err).ToNot(HaveOccurred())
 			err = r.ValidateFormerLeader(context.TODO())
 			Expect(err).To(HaveOccurred())
@@ -233,7 +238,12 @@ var _ = Describe("ConfigReconciler", func() {
 				WithRuntimeObjects(fakeProcess, fakeNodeConfig).
 				WithStatusSubresource(&fakeNodeConfig.Items[0]).
 				Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+
+			nr, err := NewNodeReconciler(c, logr.Logger{}, "10s")
+			Expect(err).ToNot(HaveOccurred())
+			nr.nodes[fakeNodes.Items[0].Name] = fakeNodes.Items[0]
+
+			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, nr)
 			Expect(err).ToNot(HaveOccurred())
 			ctx := context.TODO()
 			wg := sync.WaitGroup{}
@@ -258,7 +268,12 @@ var _ = Describe("ConfigReconciler", func() {
 				WithRuntimeObjects(fakeProcess, fakeNodeConfig).
 				WithStatusSubresource(&fakeNodeConfig.Items[0]).
 				Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1)
+
+			nr, err := NewNodeReconciler(c, logr.Logger{}, "10s")
+			Expect(err).ToNot(HaveOccurred())
+			nr.nodes[fakeNodes.Items[0].Name] = fakeNodes.Items[0]
+
+			r, err := NewConfigReconciler(c, logr.Logger{}, DefaultTimeout, 1, nr)
 			Expect(err).ToNot(HaveOccurred())
 			ctx := context.TODO()
 			wg := sync.WaitGroup{}
@@ -288,7 +303,12 @@ var _ = Describe("ConfigReconciler", func() {
 				WithRuntimeObjects(fakeProcess, fakeNodeConfig, fakeNodeConfigInvalid, fakeNodes).
 				WithStatusSubresource(&fakeNodeConfig.Items[0]).
 				Build()
-			r, err := NewConfigReconciler(c, logr.Logger{}, "1s", 1)
+
+			nr, err := NewNodeReconciler(c, logr.Logger{}, "10s")
+			Expect(err).ToNot(HaveOccurred())
+			nr.nodes[fakeNodes.Items[0].Name] = fakeNodes.Items[0]
+
+			r, err := NewConfigReconciler(c, logr.Logger{}, "1s", 1, nr)
 			Expect(err).ToNot(HaveOccurred())
 
 			ctx := context.TODO()
@@ -341,7 +361,11 @@ func testReconciler(expectedStatus string) error {
 		WithRuntimeObjects(fakeProcess, fakeNodeConfig, fakeNodes).
 		WithStatusSubresource(&fakeNodeConfig.Items[0]).
 		Build()
-	r, err := NewConfigReconciler(c, logr.Logger{}, "5s", 1)
+	nr, err := NewNodeReconciler(c, logr.Logger{}, "10s")
+	Expect(err).ToNot(HaveOccurred())
+	nr.nodes[fakeNodes.Items[0].Name] = fakeNodes.Items[0]
+
+	r, err := NewConfigReconciler(c, logr.Logger{}, "5s", 1, nr)
 	Expect(err).ToNot(HaveOccurred())
 
 	ctx := context.TODO()

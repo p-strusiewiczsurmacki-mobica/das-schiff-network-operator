@@ -48,6 +48,8 @@ type ConfigReconciler struct {
 
 	OnLeaderElectionDone chan bool
 
+	nodeReconciler *NodeReconciler
+
 	currentConfigs map[string]v1alpha1.NodeConfig
 	invalidConfigs map[string]v1alpha1.NodeConfig
 	backupConfigs  map[string]v1alpha1.NodeConfig
@@ -64,7 +66,7 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string, limit int64) (*ConfigReconciler, error) {
+func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout string, limit int64, nr *NodeReconciler) (*ConfigReconciler, error) {
 	// TODO: should limit=0 disable gradual roullout?
 	if limit <= 0 {
 		return nil, fmt.Errorf("limit cannot be less than 1")
@@ -92,6 +94,7 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 			},
 		},
 		OnLeaderElectionDone: make(chan bool),
+		nodeReconciler:       nr,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -138,10 +141,10 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// list all nodes in the cluster
-	nodes, err := cr.listNodes(ctx)
-	if err != nil {
-		return fmt.Errorf("error listing nodes: %w", err)
-	}
+	nodes := cr.nodeReconciler.GetNodes()
+	// if err != nil {
+	// 	return fmt.Errorf("error listing nodes: %w", err)
+	// }
 
 	// get exisiting configs
 	if err := cr.getConfigs(ctx); err != nil {
@@ -268,23 +271,23 @@ func (cr *ConfigReconciler) prepareBackups(toRestore []string) map[string]*v1alp
 	return filteredBackups
 }
 
-func (cr *ConfigReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
-	// list all nodes
-	list := &corev1.NodeList{}
-	if err := cr.client.List(ctx, list); err != nil {
-		return nil, fmt.Errorf("error listing nodes: %w", err)
-	}
+// func (cr *ConfigReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
+// 	// list all nodes
+// 	list := &corev1.NodeList{}
+// 	if err := cr.client.List(ctx, list); err != nil {
+// 		return nil, fmt.Errorf("error listing nodes: %w", err)
+// 	}
 
-	// discard control-plane nodes and create map of nodes
-	nodes := make(map[string]corev1.Node)
-	for i := range list.Items {
-		if _, exists := list.Items[i].Labels["node-role.kubernetes.io/control-plane"]; !exists {
-			nodes[list.Items[i].Name] = list.Items[i]
-		}
-	}
+// 	// discard control-plane nodes and create map of nodes
+// 	nodes := make(map[string]corev1.Node)
+// 	for i := range list.Items {
+// 		if _, exists := list.Items[i].Labels["node-role.kubernetes.io/control-plane"]; !exists {
+// 			nodes[list.Items[i].Name] = list.Items[i]
+// 		}
+// 	}
 
-	return nodes, nil
-}
+// 	return nodes, nil
+// }
 
 func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha1.NodeConfig, error) {
 	// list all node configs
@@ -530,6 +533,10 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned, true); err != nil {
+		if !cr.doesNodeStillExist(name) {
+			cr.logger.Info("node %s seems to not exist anymore, skipping...")
+			return
+		}
 		if err := cr.invalidateConfig(ctx, newConfigs[name], createObject); err != nil {
 			sendError("error invalidating config", err, errCh, cancel)
 			return
@@ -544,6 +551,14 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 	cr.logger.Info("config deployed", "name", name, "status", newConfigs[name].Status.ConfigStatus)
 
 	errCh <- nil
+}
+
+func (cr *ConfigReconciler) doesNodeStillExist(name string) bool {
+	nodes := cr.nodeReconciler.GetNodes()
+	if _, exist := nodes[name]; !exist {
+		return false
+	}
+	return true
 }
 
 func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.NodeConfig,

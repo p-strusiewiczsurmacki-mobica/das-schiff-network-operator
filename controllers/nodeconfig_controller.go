@@ -19,16 +19,22 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
+	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// RoutingTableReconciler reconciles a RoutingTable object.
+// NodeConfigReconciler reconciles a NodeConfig object.
 type NodeConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -57,11 +63,31 @@ func (r *NodeConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// nodesMapFn := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return []reconcile.Request{{}} })
+	namePredicates := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return strings.Contains(e.Object.GetName(), os.Getenv(healthcheck.NodenameEnv))
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return strings.Contains(e.ObjectNew.GetName(), os.Getenv(healthcheck.NodenameEnv))
+		},
+		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.NodeConfig{}).
+		For(&networkv1alpha1.NodeConfig{}, builder.WithPredicates(namePredicates)).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
 	}
 	return nil
+
+	// err := ctrl.NewControllerManagedBy(mgr).
+	// 	For(&networkv1alpha1.NodeConfig{}).
+	// 	Complete(r)
+	// if err != nil {
+	// 	return fmt.Errorf("error creating controller: %w", err)
+	// }
+	// return nil
 }

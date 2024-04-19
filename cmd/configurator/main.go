@@ -105,9 +105,14 @@ func main() {
 }
 
 func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, error) {
-	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, limit)
+	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger(), timeout)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create debounced reconciler: %w", err)
+		return nil, fmt.Errorf("unable to create node reconciler: %w", err)
+	}
+
+	r, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, limit, nr)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
@@ -132,6 +137,22 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Reconciler: r,
 	}).SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+	}
+
+	if err = (&controllers.NodeReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: nr,
+	}).SetupWithManager(mgr); err != nil {
+		return nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+	}
+
+	if err = (&controllers.EventReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: r,
+	}).SetupWithManager(mgr, nr.Events); err != nil {
+		return nil, fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
 	}
 
 	return r, nil
@@ -163,6 +184,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 
 type onLeaderElectionEvent struct {
 	cr *reconciler.ConfigReconciler
+	nr *reconciler.NodeReconciler
 }
 
 func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler) *onLeaderElectionEvent {
@@ -183,6 +205,9 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 
 	e.cr.OnLeaderElectionDone <- true
 	close(e.cr.OnLeaderElectionDone)
+
+	// e.nr.OnLeaderElectionDone <- true
+	// close(e.nr.OnLeaderElectionDone)
 
 	return nil
 }
