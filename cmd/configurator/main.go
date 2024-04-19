@@ -206,8 +206,8 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	e.cr.OnLeaderElectionDone <- true
 	close(e.cr.OnLeaderElectionDone)
 
-	// e.nr.OnLeaderElectionDone <- true
-	// close(e.nr.OnLeaderElectionDone)
+	e.nr.OnLeaderElectionDone <- true
+	close(e.nr.OnLeaderElectionDone)
 
 	return nil
 }
