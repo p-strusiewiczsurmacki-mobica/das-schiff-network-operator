@@ -481,7 +481,7 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 		return
 	}
 
-	// deploy config -return if error occurred or it was not required to deploy the config
+	// deploy config - return if error occurred or it was not required to deploy the config
 	deployed, err := cr.deployConfig(ctx, newConfigs[name], backup)
 	if err != nil || !deployed {
 		errCh <- err
