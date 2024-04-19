@@ -262,6 +262,16 @@ var _ = Describe("HealthCheck", func() {
 			Expect(err).To(HaveOccurred())
 		})
 	})
+	Context("CheckAPIServer() should", func() {
+		It("should return no error", func() {
+			c := fake.NewClientBuilder().Build()
+			hc, err := NewHealthChecker(c, NewHealthCheckToolkit(nil, nil, nil), &NetHealthcheckConfig{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(hc).ToNot(BeNil())
+			err = hc.CheckAPIServer(context.TODO())
+			Expect(err).ToNot(HaveOccurred())
+		})
+	})
 })
 
 func fakeErrorGetByName(_ string) (netlink.Link, error) {

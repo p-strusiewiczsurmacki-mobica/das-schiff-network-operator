@@ -137,17 +137,6 @@ func (hc *HealthChecker) CheckInterfaces() error {
 	return nil
 }
 
-func (hc *HealthChecker) checkInterface(intf string) error {
-	link, err := hc.toolkit.linkByName(intf)
-	if err != nil {
-		return err
-	}
-	if link.Attrs().OperState != netlink.OperUp {
-		return errors.New("link " + intf + " is not up - current state: " + link.Attrs().OperState.String())
-	}
-	return nil
-}
-
 // CheckReachability checks if all hosts in Reachability slice are reachable.
 func (hc *HealthChecker) CheckReachability() error {
 	for _, i := range hc.netConfig.Reachability {
@@ -159,6 +148,25 @@ func (hc *HealthChecker) CheckReachability() error {
 			}
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckAPIServer checks if Kubernetes Api server is reachable from the pod.
+func (hc HealthChecker) CheckAPIServer(ctx context.Context) error {
+	if err := hc.client.List(ctx, &corev1.PodList{}); err != nil {
+		return fmt.Errorf("unable to reach API server: %w", err)
+	}
+	return nil
+}
+
+func (hc *HealthChecker) checkInterface(intf string) error {
+	link, err := hc.toolkit.linkByName(intf)
+	if err != nil {
+		return err
+	}
+	if link.Attrs().OperState != netlink.OperUp {
+		return errors.New("link " + intf + " is not up - current state: " + link.Attrs().OperState.String())
 	}
 	return nil
 }
