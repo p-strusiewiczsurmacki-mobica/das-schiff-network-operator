@@ -10,6 +10,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/debounce"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
@@ -85,7 +86,7 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 
 	// force reconciliation if new nodes were added to the cluster
 	if len(added) > 0 {
-		nr.Events <- event.GenericEvent{}
+		nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: added[0]}}}
 	}
 
 	return nil

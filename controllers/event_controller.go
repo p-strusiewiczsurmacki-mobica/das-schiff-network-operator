@@ -59,7 +59,7 @@ func (r *EventReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.R
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *EventReconciler) SetupWithManager(mgr ctrl.Manager, events chan event.GenericEvent) error {
-	err := ctrl.NewControllerManagedBy(mgr).
+	err := ctrl.NewControllerManagedBy(mgr).Named("EventReconciler").
 		WatchesRawSource(&source.Channel{Source: events}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 	if err != nil {
