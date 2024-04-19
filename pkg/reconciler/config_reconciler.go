@@ -142,9 +142,6 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 
 	// list all nodes in the cluster
 	nodes := cr.nodeReconciler.GetNodes()
-	// if err != nil {
-	// 	return fmt.Errorf("error listing nodes: %w", err)
-	// }
 
 	// get exisiting configs
 	if err := cr.getConfigs(ctx); err != nil {
@@ -270,24 +267,6 @@ func (cr *ConfigReconciler) prepareBackups(toRestore []string) map[string]*v1alp
 	}
 	return filteredBackups
 }
-
-// func (cr *ConfigReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
-// 	// list all nodes
-// 	list := &corev1.NodeList{}
-// 	if err := cr.client.List(ctx, list); err != nil {
-// 		return nil, fmt.Errorf("error listing nodes: %w", err)
-// 	}
-
-// 	// discard control-plane nodes and create map of nodes
-// 	nodes := make(map[string]corev1.Node)
-// 	for i := range list.Items {
-// 		if _, exists := list.Items[i].Labels["node-role.kubernetes.io/control-plane"]; !exists {
-// 			nodes[list.Items[i].Name] = list.Items[i]
-// 		}
-// 	}
-
-// 	return nodes, nil
-// }
 
 func (cr *ConfigReconciler) listConfigs(ctx context.Context) (map[string]v1alpha1.NodeConfig, error) {
 	// list all node configs
@@ -502,8 +481,7 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 		return
 	}
 
-	// deploy config
-	// return if error occurred or it was not required to deploy the config
+	// deploy config -return if error occurred or it was not required to deploy the config
 	deployed, err := cr.deployConfig(ctx, newConfigs[name], backup)
 	if err != nil || !deployed {
 		errCh <- err

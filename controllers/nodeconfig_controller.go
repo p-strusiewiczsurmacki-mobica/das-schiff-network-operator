@@ -63,7 +63,6 @@ func (r *NodeConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// nodesMapFn := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return []reconcile.Request{{}} })
 	namePredicates := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return strings.Contains(e.Object.GetName(), os.Getenv(healthcheck.NodenameEnv))
@@ -71,8 +70,8 @@ func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return strings.Contains(e.ObjectNew.GetName(), os.Getenv(healthcheck.NodenameEnv))
 		},
-		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
-		GenericFunc: func(e event.GenericEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).
@@ -82,12 +81,4 @@ func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("error creating controller: %w", err)
 	}
 	return nil
-
-	// err := ctrl.NewControllerManagedBy(mgr).
-	// 	For(&networkv1alpha1.NodeConfig{}).
-	// 	Complete(r)
-	// if err != nil {
-	// 	return fmt.Errorf("error creating controller: %w", err)
-	// }
-	// return nil
 }

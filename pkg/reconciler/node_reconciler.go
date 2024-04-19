@@ -31,11 +31,6 @@ type NodeReconciler struct {
 	OnLeaderElectionDone chan bool
 }
 
-type reconcileNode struct {
-	*NodeReconciler
-	logr.Logger
-}
-
 // Reconcile starts reconciliation.
 func (nr *NodeReconciler) Reconcile(ctx context.Context) {
 	nr.debouncer.Debounce(ctx)
@@ -43,7 +38,6 @@ func (nr *NodeReconciler) Reconcile(ctx context.Context) {
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
 func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout string) (*NodeReconciler, error) {
-
 	reconciler := &NodeReconciler{
 		client:               clusterClient,
 		logger:               logger,
@@ -59,9 +53,9 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 }
 
 func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
-	// <-nr.OnLeaderElectionDone
-	// nr.Mutex.Lock()
-	// defer nr.Mutex.Unlock()
+	<-nr.OnLeaderElectionDone
+	nr.Mutex.Lock()
+	defer nr.Mutex.Unlock()
 
 	currentNodes, err := nr.ListNodes(ctx)
 	if err != nil {
@@ -126,7 +120,7 @@ func (nr *NodeReconciler) ListNodes(ctx context.Context) (map[string]corev1.Node
 func (nr *NodeReconciler) checkNodeChanges(newState map[string]corev1.Node) (added, deleted []string) {
 	added = getDifference(newState, nr.nodes)
 	deleted = getDifference(nr.nodes, newState)
-	return
+	return added, deleted
 }
 
 func getDifference(first, second map[string]corev1.Node) []string {
@@ -139,6 +133,7 @@ func getDifference(first, second map[string]corev1.Node) []string {
 	return diff
 }
 
+// nolint: gocritic
 func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
