@@ -230,10 +230,10 @@ func storeNodeConfig(cfg *v1alpha1.NodeConfig, path string) error {
 }
 
 func (reconciler *Reconciler) checkHealth(ctx context.Context) error {
-	_, err := reconciler.healthChecker.IsFRRActive()
-	if err != nil {
-		return fmt.Errorf("error checking FRR status: %w", err)
-	}
+	// _, err := reconciler.healthChecker.IsFRRActive()
+	// if err != nil {
+	// 	return fmt.Errorf("error checking FRR status: %w", err)
+	// }
 	if err := reconciler.healthChecker.CheckInterfaces(); err != nil {
 		return fmt.Errorf("error checking network interfaces: %w", err)
 	}

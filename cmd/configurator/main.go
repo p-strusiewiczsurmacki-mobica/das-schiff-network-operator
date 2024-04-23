@@ -201,7 +201,7 @@ func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	// check if former leader did not fail amid configuration process
 	if err := e.cr.ValidateFormerLeader(ctx); err != nil {
-		return fmt.Errorf("error validating former leader work")
+		return fmt.Errorf("error validating former leader work: %w", err)
 	}
 
 	e.cr.OnLeaderElectionDone <- true

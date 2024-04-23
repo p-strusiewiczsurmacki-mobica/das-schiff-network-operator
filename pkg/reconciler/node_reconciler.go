@@ -3,8 +3,8 @@ package reconciler
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
@@ -21,13 +21,14 @@ const (
 
 // NodeReconciler is responsible for watching node objects.
 type NodeReconciler struct {
-	client    client.Client
-	logger    logr.Logger
-	debouncer *debounce.Debouncer
-	timeout   string
-	nodes     map[string]corev1.Node
-	Mutex     sync.Mutex
-	Events    chan event.GenericEvent
+	client     client.Client
+	logger     logr.Logger
+	debouncer  *debounce.Debouncer
+	timeout    string
+	nodes      map[string]corev1.Node
+	Mutex      sync.Mutex
+	Events     chan event.GenericEvent
+	lastUpdate time.Time
 
 	OnLeaderElectionDone chan bool
 }
@@ -48,7 +49,7 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 		OnLeaderElectionDone: make(chan bool),
 	}
 
-	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
+	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, time.Second*5, logger)
 
 	return reconciler, nil
 }
@@ -63,22 +64,33 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
+	nr.lastUpdate = time.Now()
+
 	added, deleted := nr.checkNodeChanges(currentNodes)
+
+	if len(deleted) > 0 {
+		nr.logger.Info("nodes deleted", "nodes", deleted)
+	}
 
 	// remove NodeConfig obejcts if node was deleted
 	for _, name := range deleted {
+		nr.logger.Info("node was deleted, will delete NodeConfig objects", "node", name)
 		nodeConfigs := &v1alpha1.NodeConfigList{}
 		if err := nr.client.List(ctx, nodeConfigs); err != nil {
 			return fmt.Errorf("error listing NodeConfigs: %w", err)
 		}
 
 		for i := range nodeConfigs.Items {
-			if strings.Contains(nodeConfigs.Items[i].Name, name) {
+			// TODO: should owner references be used to identify configs?
+			if nodeConfigs.Items[i].Name == name ||
+				nodeConfigs.Items[i].Name == name+invalidSuffix ||
+				nodeConfigs.Items[i].Name == name+backupSuffix {
 				if err := nr.client.Delete(ctx, &nodeConfigs.Items[i]); err != nil {
 					return fmt.Errorf("error while deleting config for deleted node: %w", err)
 				}
 			}
 		}
+		nr.logger.Info("NodeConfig objects associated with the node were deleted", "node", name)
 	}
 
 	// save list of current nodes
@@ -86,7 +98,8 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 
 	// force reconciliation if new nodes were added to the cluster
 	if len(added) > 0 {
-		nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: added[0]}}}
+		nr.logger.Info("nodes added", "nodes", added)
+		nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{}}}
 	}
 
 	return nil
@@ -106,6 +119,7 @@ func (nr *NodeReconciler) ListNodes(ctx context.Context) (map[string]corev1.Node
 		if !isControlPlane {
 			// discard nodes that are not in ready state
 			for j := range list.Items[i].Status.Conditions {
+				// TODO: Should taint node.kubernetes.io/not-ready be used instead of Conditions?
 				if list.Items[i].Status.Conditions[j].Type == corev1.NodeReady &&
 					list.Items[i].Status.Conditions[j].Status == corev1.ConditionTrue {
 					nodes[list.Items[i].Name] = list.Items[i]
@@ -143,4 +157,15 @@ func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 		currentNodes[k] = v
 	}
 	return currentNodes
+}
+
+func (nr *NodeReconciler) CheckIfNodeExists(ctx context.Context, name string) (bool, error) {
+	nr.Mutex.Lock()
+	defer nr.Mutex.Unlock()
+	currentNodes, err := nr.ListNodes(ctx)
+	if err != nil {
+		return false, fmt.Errorf("error listing nodes: %w", err)
+	}
+	_, exists := currentNodes[name]
+	return exists, nil
 }

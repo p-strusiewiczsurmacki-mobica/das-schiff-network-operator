@@ -25,6 +25,7 @@ const (
 	statusProvisioning = "provisioning"
 	statusInvalid      = "invalid"
 	statusProvisioned  = "provisioned"
+	statusEmpty        = ""
 
 	DefaultTimeout         = "60s"
 	DefaultNodeUpdateLimit = 1
@@ -53,6 +54,8 @@ type ConfigReconciler struct {
 	currentConfigs map[string]v1alpha1.NodeConfig
 	invalidConfigs map[string]v1alpha1.NodeConfig
 	backupConfigs  map[string]v1alpha1.NodeConfig
+
+	reconcileMutex sync.Mutex
 }
 
 type reconcileConfig struct {
@@ -120,12 +123,15 @@ func (cr *ConfigReconciler) ValidateFormerLeader(ctx context.Context) error {
 		if err := cr.revertChanges(ctx, nodes); err != nil {
 			return fmt.Errorf("error restoring backup NodeConfigs: %w", err)
 		}
+		cr.logger.Info("reverted chenges after leader change")
 	}
 
 	return nil
 }
 
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
+	cr.reconcileMutex.Lock()
+	defer cr.reconcileMutex.Unlock()
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
 		Logger:           cr.logger,
@@ -198,6 +204,7 @@ func getConfigsBySuffix(suffix string, configs map[string]v1alpha1.NodeConfig) m
 
 // getConfigs gets currently deployed NodeConfigs and stores them in ConfigReconciler object.
 func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
+	cr.logger.Info("getting configs")
 	existingConfigs, err := cr.listConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing configs: %w", err)
@@ -208,6 +215,8 @@ func (cr *ConfigReconciler) getConfigs(ctx context.Context) error {
 	cr.invalidConfigs = getConfigsBySuffix(invalidSuffix, existingConfigs)
 	cr.backupConfigs = getConfigsBySuffix(backupSuffix, existingConfigs)
 	cr.currentConfigs = existingConfigs
+
+	cr.logger.Info("configs", "current", len(cr.currentConfigs), "backup", len(cr.backupConfigs), "invalid", len(cr.invalidConfigs))
 
 	return nil
 }
@@ -492,6 +501,12 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 	// this will be later used for reverting changes if any node reports an error
 	processedNodes <- name
 
+	// wait for status to be updated
+	if err := cr.waitForConfig(ctx, newConfigs[name], statusEmpty, false); err != nil {
+		sendError(fmt.Sprintf("error waiting for NodeConfig status %s", statusEmpty), err, errCh, cancel)
+		return
+	}
+
 	if err := cr.client.Get(ctx, client.ObjectKeyFromObject(newConfigs[name]), newConfigs[name]); err != nil {
 		sendError("error getting NodeConfig", err, errCh, cancel)
 		return
@@ -511,8 +526,9 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned, true); err != nil {
-		if !cr.doesNodeStillExist(name) {
-			cr.logger.Info("node %s seems to not exist anymore, skipping...")
+		nodeExists, _ := cr.nodeReconciler.CheckIfNodeExists(ctx, name)
+		if !nodeExists {
+			cr.logger.Info("seems that node was deleted during the configuration process, ignoring...", "nondename", name)
 			return
 		}
 		if err := cr.invalidateConfig(ctx, newConfigs[name], createObject); err != nil {
@@ -529,14 +545,6 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 	cr.logger.Info("config deployed", "name", name, "status", newConfigs[name].Status.ConfigStatus)
 
 	errCh <- nil
-}
-
-func (cr *ConfigReconciler) doesNodeStillExist(name string) bool {
-	nodes := cr.nodeReconciler.GetNodes()
-	if _, exist := nodes[name]; !exist {
-		return false
-	}
-	return true
 }
 
 func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.NodeConfig,
