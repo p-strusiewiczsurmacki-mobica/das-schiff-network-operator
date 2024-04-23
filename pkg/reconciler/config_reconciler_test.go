@@ -235,7 +235,7 @@ var _ = Describe("ConfigReconciler", func() {
 				},
 			}
 			c := fake.NewClientBuilder().WithScheme(s).
-				WithRuntimeObjects(fakeProcess, fakeNodeConfig).
+				WithRuntimeObjects(fakeProcess, fakeNodeConfig, fakeNodes).
 				WithStatusSubresource(&fakeNodeConfig.Items[0]).
 				Build()
 
