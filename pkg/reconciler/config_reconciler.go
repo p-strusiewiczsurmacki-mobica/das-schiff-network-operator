@@ -512,8 +512,8 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 		return
 	}
 	// set the status to provisioning
-	newConfigs[name].Status.ConfigStatus = statusProvisioning
-	if err := cr.client.Status().Update(ctx, newConfigs[name]); err != nil {
+	ctxTimeout, _ := context.WithTimeout(ctx, cr.timeout)
+	if err := cr.updateStatusWithTimeout(ctxTimeout, newConfigs[name], statusProvisioning); err != nil {
 		sendError("error updating NodeConfig status", err, errCh, cancel)
 		return
 	}
@@ -526,7 +526,7 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 	// wait for the node to update the status to 'provisioned' or 'invalid'
 	if err := cr.waitForConfig(ctx, newConfigs[name], statusProvisioned, true); err != nil {
-		nodeExists, _ := cr.nodeReconciler.CheckIfNodeExists(ctx, name)
+		nodeExists := cr.nodeReconciler.CheckIfNodeExists(name)
 		if !nodeExists {
 			cr.logger.Info("seems that node was deleted during the configuration process, ignoring...", "nondename", name)
 			return
@@ -549,6 +549,14 @@ func (cr *ConfigReconciler) processConfig(ctx context.Context, cancel context.Ca
 
 func (cr *ConfigReconciler) deployConfig(ctx context.Context, config *v1alpha1.NodeConfig,
 	backup bool) (bool, error) {
+
+	nodeExists := cr.nodeReconciler.CheckIfNodeExists(config.Name)
+	if !nodeExists {
+		// node was deleted - nothing to do
+		cr.logger.Info("seems that node was deleted during the configuration process, ignoring...", "nondename", config.Name)
+		return false, nil
+	}
+
 	if backup {
 		if err := cr.createBackup(ctx, config); err != nil {
 			return false, fmt.Errorf("error creating backup config: %w", err)
@@ -644,8 +652,8 @@ func (cr *ConfigReconciler) invalidateConfig(ctx context.Context, config *v1alph
 	// let's assume that the node died and was unable to invalidate config
 	// so we will do that here instead
 	if config.Status.ConfigStatus == statusProvisioning {
-		config.Status.ConfigStatus = statusInvalid
-		if err := cr.client.Status().Update(ctx, config); err != nil {
+		ctxTimeout, _ := context.WithTimeout(ctx, cr.timeout)
+		if err := cr.updateStatusWithTimeout(ctxTimeout, config, statusInvalid); err != nil {
 			return fmt.Errorf("error updating config: %w", err)
 		}
 	}
@@ -706,4 +714,29 @@ func (cr *ConfigReconciler) processConfigs(ctx context.Context,
 	}
 
 	return deployed, nil
+}
+
+func (cr *ConfigReconciler) updateStatusWithTimeout(ctx context.Context, config *v1alpha1.NodeConfig, status string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("status update error: %w", ctx.Err())
+		default:
+			config.Status.ConfigStatus = status
+			err := cr.client.Status().Update(ctx, config)
+			if err != nil {
+				if apierrors.IsConflict(err) {
+					// if there is a conflict, update local copy of the config
+					if getErr := cr.client.Get(ctx, client.ObjectKeyFromObject(config), config); getErr != nil {
+						return fmt.Errorf("error updating status: %w", getErr)
+					}
+					time.Sleep(defaultCooldownTime)
+					continue
+				}
+				return fmt.Errorf("status update error: %w", err)
+			} else {
+				return nil
+			}
+		}
+	}
 }

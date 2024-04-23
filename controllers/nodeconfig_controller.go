@@ -42,6 +42,7 @@ type NodeConfigReconciler struct {
 	Reconciler *reconciler.Reconciler
 }
 
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=nodeconfigs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=nodeconfigs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=nodeconfigs/finalizers,verbs=update

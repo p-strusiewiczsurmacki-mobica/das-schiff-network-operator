@@ -29,6 +29,7 @@ type NodeReconciler struct {
 	Mutex      sync.Mutex
 	Events     chan event.GenericEvent
 	lastUpdate time.Time
+	firstRun   bool
 
 	OnLeaderElectionDone chan bool
 }
@@ -47,6 +48,7 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 		nodes:                make(map[string]corev1.Node),
 		Events:               make(chan event.GenericEvent),
 		OnLeaderElectionDone: make(chan bool),
+		firstRun:             true,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, time.Second*5, logger)
@@ -97,10 +99,11 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 	nr.nodes = currentNodes
 
 	// force reconciliation if new nodes were added to the cluster
-	if len(added) > 0 {
-		nr.logger.Info("nodes added", "nodes", added)
+	if len(added) > 0 && !nr.firstRun {
 		nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{}}}
 	}
+
+	nr.firstRun = false
 
 	return nil
 }
@@ -159,13 +162,9 @@ func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 	return currentNodes
 }
 
-func (nr *NodeReconciler) CheckIfNodeExists(ctx context.Context, name string) (bool, error) {
+func (nr *NodeReconciler) CheckIfNodeExists(name string) bool {
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
-	currentNodes, err := nr.ListNodes(ctx)
-	if err != nil {
-		return false, fmt.Errorf("error listing nodes: %w", err)
-	}
-	_, exists := currentNodes[name]
-	return exists, nil
+	_, exists := nr.nodes[name]
+	return exists
 }
