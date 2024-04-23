@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	defaultDebounceTime = 20 * time.Second
+	defaultDebounceTime     = 20 * time.Second
+	defaultNodeDebounceTime = 5 * time.Second
 
 	DefaultNodeConfigPath = "/opt/network-operator/nodeConfig.yaml"
 	nodeConfigFilePerm    = 0o600
@@ -58,7 +59,7 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 		nodeConfigPath: nodeConfigPath,
 	}
 
-	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
+	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultNodeDebounceTime, logger)
 
 	if val := os.Getenv("FRR_CONFIG_FILE"); val != "" {
 		reconciler.frrManager.ConfigPath = val
