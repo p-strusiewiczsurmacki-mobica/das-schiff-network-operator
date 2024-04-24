@@ -14,6 +14,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - network.schiff.telekom.de
   resources:
   - layer2networkconfigurations
