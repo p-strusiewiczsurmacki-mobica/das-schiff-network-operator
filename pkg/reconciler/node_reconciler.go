@@ -17,21 +17,22 @@ import (
 
 const (
 	controlPlaneLabel = "node-role.kubernetes.io/control-plane"
+	nodeDebauncerTime = time.Second * 5
 )
 
 // NodeReconciler is responsible for watching node objects.
 type NodeReconciler struct {
-	client     client.Client
-	logger     logr.Logger
-	debouncer  *debounce.Debouncer
-	timeout    string
-	nodes      map[string]corev1.Node
-	Mutex      sync.Mutex
-	Events     chan event.GenericEvent
-	lastUpdate time.Time
-	firstRun   bool
+	client           client.Client
+	logger           logr.Logger
+	debouncer        *debounce.Debouncer
+	timeout          string
+	nodes            map[string]corev1.Node
+	Mutex            sync.Mutex
+	Events           chan event.GenericEvent
+	firstRun         bool
+	configReconciler *ConfigReconciler
 
-	OnLeaderElectionDone chan bool
+	NodeReconcilerReady chan bool
 }
 
 // Reconcile starts reconciliation.
@@ -40,24 +41,27 @@ func (nr *NodeReconciler) Reconcile(ctx context.Context) {
 }
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout string) (*NodeReconciler, error) {
+func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout string, cr *ConfigReconciler) (*NodeReconciler, error) {
 	reconciler := &NodeReconciler{
-		client:               clusterClient,
-		logger:               logger,
-		timeout:              timeout,
-		nodes:                make(map[string]corev1.Node),
-		Events:               make(chan event.GenericEvent),
-		OnLeaderElectionDone: make(chan bool),
-		firstRun:             true,
+		client:              clusterClient,
+		logger:              logger,
+		timeout:             timeout,
+		nodes:               make(map[string]corev1.Node),
+		Events:              make(chan event.GenericEvent),
+		NodeReconcilerReady: make(chan bool),
+		firstRun:            true,
+		configReconciler:    cr,
 	}
 
-	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, time.Second*5, logger)
+	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, nodeDebauncerTime, logger)
 
 	return reconciler, nil
 }
 
 func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
-	<-nr.OnLeaderElectionDone
+	nr.logger.Info("node reconciler started")
+
+	nr.logger.Info("on leader election finieshed")
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
 
@@ -66,9 +70,11 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	nr.lastUpdate = time.Now()
+	nr.logger.Info("listed nodes")
 
 	added, deleted := nr.checkNodeChanges(currentNodes)
+
+	nr.logger.Info("checked changes")
 
 	if len(deleted) > 0 {
 		nr.logger.Info("nodes deleted", "nodes", deleted)
@@ -92,18 +98,34 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 				}
 			}
 		}
+		if err := nr.configReconciler.DeleteConfig(name); err != nil {
+			return fmt.Errorf("error deleting node objects: %w", err)
+		}
 		nr.logger.Info("NodeConfig objects associated with the node were deleted", "node", name)
 	}
 
 	// save list of current nodes
 	nr.nodes = currentNodes
 
+	nr.logger.Info("add nodes", "number", len(added))
+
 	// force reconciliation if new nodes were added to the cluster
-	if len(added) > 0 && !nr.firstRun {
-		nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{}}}
+	if len(added) > 0 {
+		if err := nr.configReconciler.AddConfigsForNodes(added); err != nil {
+			return fmt.Errorf("error adding configs for new nodes: %w", err)
+		}
+		if !nr.firstRun {
+			// it's not needed to trigger reconciler on first run
+			nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{}}}
+		}
 	}
 
-	nr.firstRun = false
+	if nr.firstRun {
+		nr.NodeReconcilerReady <- true
+		nr.firstRun = false
+	}
+
+	nr.logger.Info("node reconciler run", "nodes number", len(nr.nodes))
 
 	return nil
 }
