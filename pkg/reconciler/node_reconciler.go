@@ -7,10 +7,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/debounce"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
@@ -22,17 +20,18 @@ const (
 
 // NodeReconciler is responsible for watching node objects.
 type NodeReconciler struct {
-	client           client.Client
-	logger           logr.Logger
-	debouncer        *debounce.Debouncer
-	timeout          string
-	nodes            map[string]corev1.Node
-	Mutex            sync.Mutex
-	Events           chan event.GenericEvent
-	firstRun         bool
-	configReconciler *ConfigReconciler
+	client    client.Client
+	logger    logr.Logger
+	debouncer *debounce.Debouncer
+	nodes     map[string]corev1.Node
+	Mutex     sync.Mutex
+	Events    chan event.GenericEvent
+	firstRun  bool
+	timeout   time.Duration
 
 	NodeReconcilerReady chan bool
+	configManagerInform chan bool
+	deleteNodeInform    chan []string
 }
 
 // Reconcile starts reconciliation.
@@ -41,16 +40,17 @@ func (nr *NodeReconciler) Reconcile(ctx context.Context) {
 }
 
 // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout string, cr *ConfigReconciler) (*NodeReconciler, error) {
+func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration, cmInfo chan bool, nodeDelInfo chan []string) (*NodeReconciler, error) {
 	reconciler := &NodeReconciler{
 		client:              clusterClient,
 		logger:              logger,
-		timeout:             timeout,
 		nodes:               make(map[string]corev1.Node),
 		Events:              make(chan event.GenericEvent),
 		NodeReconcilerReady: make(chan bool),
 		firstRun:            true,
-		configReconciler:    cr,
+		timeout:             timeout,
+		configManagerInform: cmInfo,
+		deleteNodeInform:    nodeDelInfo,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, nodeDebauncerTime, logger)
@@ -63,7 +63,10 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 
 	nr.Mutex.Lock()
 
-	currentNodes, err := nr.listNodes(ctx)
+	timeoutCtx, cancel := context.WithTimeout(ctx, nr.timeout)
+	defer cancel()
+
+	currentNodes, err := nr.listNodes(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
@@ -77,45 +80,16 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 
 	nr.logger.Info("checked changes")
 
+	// inform config manager that nodes were deleted
 	if len(deleted) > 0 {
+		nr.deleteNodeInform <- deleted
 		nr.logger.Info("nodes deleted", "nodes", deleted)
 	}
 
-	// remove NodeConfig obejcts if node was deleted
-	for _, name := range deleted {
-		nr.logger.Info("node was deleted, will delete NodeConfig objects", "node", name)
-		nodeConfigs := &v1alpha1.NodeConfigList{}
-		if err := nr.client.List(ctx, nodeConfigs); err != nil {
-			return fmt.Errorf("error listing NodeConfigs: %w", err)
-		}
-
-		for i := range nodeConfigs.Items {
-			// TODO: should owner references be used to identify configs?
-			if nodeConfigs.Items[i].Name == name ||
-				nodeConfigs.Items[i].Name == name+invalidSuffix ||
-				nodeConfigs.Items[i].Name == name+backupSuffix {
-				if err := nr.client.Delete(ctx, &nodeConfigs.Items[i]); err != nil {
-					return fmt.Errorf("error while deleting config for deleted node: %w", err)
-				}
-			}
-		}
-		if err := nr.configReconciler.DeleteConfig(name); err != nil {
-			return fmt.Errorf("error deleting node objects: %w", err)
-		}
-		nr.logger.Info("NodeConfig objects associated with the node were deleted", "node", name)
-	}
-
-	nr.logger.Info("add nodes", "number", len(added))
-
-	// force reconciliation if new nodes were added to the cluster
+	// inform config manager that new nodes were added
 	if len(added) > 0 {
-		if err := nr.configReconciler.CreateConfigs(added); err != nil {
-			return fmt.Errorf("error adding configs for new nodes: %w", err)
-		}
-		if !nr.firstRun {
-			// it's not needed to trigger reconciler on first run
-			nr.Events <- event.GenericEvent{Object: &corev1.Node{ObjectMeta: metav1.ObjectMeta{}}}
-		}
+		nr.configManagerInform <- true
+		nr.logger.Info("add nodes", "number", len(added))
 	}
 
 	if nr.firstRun {
@@ -183,11 +157,11 @@ func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 	return currentNodes
 }
 
-func (nr *NodeReconciler) CheckIfNodeExists(name string) bool {
-	nr.logger.Info("checking if node exists", "node", name)
-	nr.Mutex.Lock()
-	defer nr.Mutex.Unlock()
-	_, exists := nr.nodes[name]
-	nr.logger.Info("status", "node", name, "exists", exists)
-	return exists
-}
+// func (nr *NodeReconciler) CheckIfNodeExists(name string) bool {
+// 	nr.logger.Info("checking if node exists", "node", name)
+// 	nr.Mutex.Lock()
+// 	defer nr.Mutex.Unlock()
+// 	_, exists := nr.nodes[name]
+// 	nr.logger.Info("status", "node", name, "exists", exists)
+// 	return exists
+// }
