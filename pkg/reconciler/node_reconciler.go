@@ -61,11 +61,9 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 	nr.logger.Info("node reconciler started")
 
-	nr.logger.Info("on leader election finieshed")
 	nr.Mutex.Lock()
-	defer nr.Mutex.Unlock()
 
-	currentNodes, err := nr.ListNodes(ctx)
+	currentNodes, err := nr.listNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
@@ -73,6 +71,9 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 	nr.logger.Info("listed nodes")
 
 	added, deleted := nr.checkNodeChanges(currentNodes)
+	// save list of current nodes
+	nr.nodes = currentNodes
+	nr.Mutex.Unlock()
 
 	nr.logger.Info("checked changes")
 
@@ -104,14 +105,11 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 		nr.logger.Info("NodeConfig objects associated with the node were deleted", "node", name)
 	}
 
-	// save list of current nodes
-	nr.nodes = currentNodes
-
 	nr.logger.Info("add nodes", "number", len(added))
 
 	// force reconciliation if new nodes were added to the cluster
 	if len(added) > 0 {
-		if err := nr.configReconciler.AddConfigsForNodes(added); err != nil {
+		if err := nr.configReconciler.CreateConfigs(added); err != nil {
 			return fmt.Errorf("error adding configs for new nodes: %w", err)
 		}
 		if !nr.firstRun {
@@ -130,7 +128,7 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (nr *NodeReconciler) ListNodes(ctx context.Context) (map[string]corev1.Node, error) {
+func (nr *NodeReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
 	// list all nodes
 	list := &corev1.NodeList{}
 	if err := nr.client.List(ctx, list); err != nil {
@@ -175,6 +173,7 @@ func getDifference(first, second map[string]corev1.Node) []string {
 
 // nolint: gocritic
 func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
+	nr.logger.Info("getting nodes")
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
 	currentNodes := make(map[string]corev1.Node)
@@ -185,8 +184,10 @@ func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 }
 
 func (nr *NodeReconciler) CheckIfNodeExists(name string) bool {
+	nr.logger.Info("checking if node exists", "node", name)
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
 	_, exists := nr.nodes[name]
+	nr.logger.Info("status", "node", name, "exists", exists)
 	return exists
 }
