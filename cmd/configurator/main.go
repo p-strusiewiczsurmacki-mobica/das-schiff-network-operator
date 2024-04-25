@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -29,6 +30,7 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
+	configmanager "github.com/telekom/das-schiff-network-operator/pkg/config_manager"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 
@@ -86,14 +88,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	cr, nr, err := setupReconcilers(mgr, timeout, limit)
+	_, _, err = setupReconcilers(mgr, timeout, limit)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
-		os.Exit(1)
-	}
-
-	if err := mgr.Add(newOnLeaderElectionEvent(cr, nr)); err != nil {
-		setupLog.Error(err, "unable to create OnLeadeElectionEvent")
 		os.Exit(1)
 	}
 
@@ -105,17 +102,24 @@ func main() {
 }
 
 func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
-	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timeout, limit)
+	cmInfo := make(chan bool)
+	nodeDelInfo := make(chan []string)
+	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), time.Second*60, cmInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), timeout, cr)
+	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), time.Second*60, cmInfo, nodeDelInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
-	cr.InjectNodeReconciler(nr)
+	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), cmInfo, nodeDelInfo)
+
+	if err := mgr.Add(newOnLeaderElectionEvent(cr, nr, cm)); err != nil {
+		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
+
+	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
 		Client:     mgr.GetClient(),
@@ -187,12 +191,14 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 type onLeaderElectionEvent struct {
 	cr *reconciler.ConfigReconciler
 	nr *reconciler.NodeReconciler
+	cm *configmanager.ConfigManager
 }
 
-func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler) *onLeaderElectionEvent {
+func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler, cm *configmanager.ConfigManager) *onLeaderElectionEvent {
 	return &onLeaderElectionEvent{
 		cr: cr,
 		nr: nr,
+		cm: cm,
 	}
 }
 
@@ -201,19 +207,21 @@ func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 }
 
 func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
-	setupLog.Info("On leader election event started")
-	<-e.nr.NodeReconcilerReady
-	close(e.nr.NodeReconcilerReady)
-	setupLog.Info("node reconciler is ready")
-	// check if former leader did not fail amid configuration process
-	if err := e.cr.ValidateFormerLeader(ctx); err != nil {
-		return fmt.Errorf("error validating former leader work: %w", err)
-	}
+	go e.cm.WatchDeletedNodes()
+	go e.cm.WatchConfigs()
+	// setupLog.Info("On leader election event started")
+	// <-e.nr.NodeReconcilerReady
+	// close(e.nr.NodeReconcilerReady)
+	// setupLog.Info("node reconciler is ready")
+	// // check if former leader did not fail amid configuration process
+	// if err := e.cr.ValidateFormerLeader(ctx); err != nil {
+	// 	return fmt.Errorf("error validating former leader work: %w", err)
+	// }
 
-	setupLog.Info("validated fromer event")
-	e.cr.OnLeaderElectionDone <- true
+	// setupLog.Info("validated fromer event")
+	// e.cr.OnLeaderElectionDone <- true
 
-	setupLog.Info("onLeaderElectionEvent is done")
+	// setupLog.Info("onLeaderElectionEvent is done")
 
 	return nil
 }
