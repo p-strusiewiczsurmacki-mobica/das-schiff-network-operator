@@ -105,12 +105,12 @@ func main() {
 }
 
 func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
-	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, limit)
+	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timeout, limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger(), timeout, cr)
+	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), timeout, cr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
 	}
@@ -204,6 +204,7 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	setupLog.Info("On leader election event started")
 	<-e.nr.NodeReconcilerReady
 	close(e.nr.NodeReconcilerReady)
+	setupLog.Info("node reconciler is ready")
 	// check if former leader did not fail amid configuration process
 	if err := e.cr.ValidateFormerLeader(ctx); err != nil {
 		return fmt.Errorf("error validating former leader work: %w", err)
@@ -212,7 +213,7 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	setupLog.Info("validated fromer event")
 	e.cr.OnLeaderElectionDone <- true
 
-	setupLog.Info("channel write done")
+	setupLog.Info("onLeaderElectionEvent is done")
 
 	return nil
 }

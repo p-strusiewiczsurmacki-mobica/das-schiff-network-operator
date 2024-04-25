@@ -7,7 +7,7 @@ import (
 )
 
 type configQueue struct {
-	mtx   sync.Mutex
+	mtx   sync.RWMutex
 	items *list.List
 }
 
@@ -58,13 +58,19 @@ func (cq *configQueue) Clear() {
 }
 
 func (cq *configQueue) Len() int {
-	cq.mtx.Lock()
-	defer cq.mtx.Unlock()
+	cq.mtx.RLock()
+	defer cq.mtx.RUnlock()
 	return cq.items.Len()
 }
 
 func (cq *configQueue) Front() *list.Element {
-	cq.mtx.Lock()
-	defer cq.mtx.Unlock()
+	cq.mtx.RLock()
+	defer cq.mtx.RUnlock()
 	return cq.items.Front()
+}
+
+func (cq *configQueue) Next(element *list.Element) *list.Element {
+	cq.mtx.RLock()
+	defer cq.mtx.RUnlock()
+	return element.Next()
 }

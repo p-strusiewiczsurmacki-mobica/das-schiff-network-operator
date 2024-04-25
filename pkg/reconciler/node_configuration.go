@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +21,7 @@ type nodeConfiguration struct {
 	mtx       sync.Mutex
 	lastError error
 	ctxCancel context.CancelFunc
+	active    atomic.Bool
 }
 
 func newNodeConfiguration(name string, current, backup, invalid *v1alpha1.NodeConfig) *nodeConfiguration {
@@ -30,7 +32,7 @@ func newNodeConfiguration(name string, current, backup, invalid *v1alpha1.NodeCo
 	return nc
 }
 
-func (nc *nodeConfiguration) Update(current, backup, invalid *v1alpha1.NodeConfig) {
+func (nc *nodeConfiguration) update(current, backup, invalid *v1alpha1.NodeConfig) {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
 
@@ -40,13 +42,12 @@ func (nc *nodeConfiguration) Update(current, backup, invalid *v1alpha1.NodeConfi
 }
 
 func newEmptyNodeConfiguration(name string) *nodeConfiguration {
-	return &nodeConfiguration{
+	nc := &nodeConfiguration{
 		name:    name,
 		current: &v1alpha1.NodeConfig{},
-		backup:  &v1alpha1.NodeConfig{},
-		invalid: &v1alpha1.NodeConfig{},
-		next:    &v1alpha1.NodeConfig{},
 	}
+	nc.active.Store(true)
+	return nc
 }
 
 func (nc *nodeConfiguration) deploy(ctx context.Context, c client.Client) (bool, error) {
@@ -75,6 +76,9 @@ func (nc *nodeConfiguration) deploy(ctx context.Context, c client.Client) (bool,
 func (nc *nodeConfiguration) createBackup(ctx context.Context, c client.Client) error {
 	backupName := nc.name + backupSuffix
 	createNew := false
+	if nc.backup == nil {
+		nc.backup = v1alpha1.NewEmptyConfig(backupName)
+	}
 	if err := c.Get(ctx, types.NamespacedName{Name: backupName}, nc.backup); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("error getting backup config %s: %w", backupName, err)
@@ -103,6 +107,10 @@ func (nc *nodeConfiguration) createBackup(ctx context.Context, c client.Client) 
 
 func (nc *nodeConfiguration) crateInvalid(ctx context.Context, c client.Client) error {
 	invalidName := fmt.Sprintf("%s%s", nc.name, invalidSuffix)
+
+	if nc.invalid == nil {
+		nc.invalid = v1alpha1.NewEmptyConfig(invalidName)
+	}
 
 	if err := c.Get(ctx, types.NamespacedName{Name: invalidName}, nc.invalid); err != nil {
 		if apierrors.IsNotFound(err) {
