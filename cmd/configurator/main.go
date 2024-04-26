@@ -106,8 +106,10 @@ func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigRe
 	if err != nil {
 		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
 	}
+
 	cmInfo := make(chan bool)
 	nodeDelInfo := make(chan []string)
+
 	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal, cmInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
@@ -120,9 +122,8 @@ func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigRe
 
 	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, cmInfo, nodeDelInfo)
 
-	if err := mgr.Add(newOnLeaderElectionEvent(cr, nr, cm)); err != nil {
+	if err := mgr.Add(newOnLeaderElectionEvent(cm)); err != nil {
 		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
-
 	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
@@ -193,15 +194,11 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 }
 
 type onLeaderElectionEvent struct {
-	cr *reconciler.ConfigReconciler
-	nr *reconciler.NodeReconciler
 	cm *configmanager.ConfigManager
 }
 
-func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler, cm *configmanager.ConfigManager) *onLeaderElectionEvent {
+func newOnLeaderElectionEvent(cm *configmanager.ConfigManager) *onLeaderElectionEvent {
 	return &onLeaderElectionEvent{
-		cr: cr,
-		nr: nr,
 		cm: cm,
 	}
 }
@@ -211,7 +208,7 @@ func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 }
 
 func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
-	setupLog.Info("nn leader election event started")
+	setupLog.Info("onLeaderElectionEvent started")
 	if err := e.cm.DirtyStartup(ctx); err != nil {
 		return fmt.Errorf("error while checking previous leader work: %w", err)
 	}
@@ -229,17 +226,4 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	case err := <-watchConfigsErr:
 		return fmt.Errorf("config watcher error: %w", err)
 	}
-	// setupLog.Info("On leader election event started")
-	// <-e.nr.NodeReconcilerReady
-	// close(e.nr.NodeReconcilerReady)
-	// setupLog.Info("node reconciler is ready")
-	// // check if former leader did not fail amid configuration process
-	// if err := e.cr.ValidateFormerLeader(ctx); err != nil {
-	// 	return fmt.Errorf("error validating former leader work: %w", err)
-	// }
-
-	// setupLog.Info("validated fromer event")
-	// e.cr.OnLeaderElectionDone <- true
-
-	// setupLog.Info("onLeaderElectionEvent is done")
 }

@@ -23,10 +23,9 @@ type NodeReconciler struct {
 	client    client.Client
 	logger    logr.Logger
 	debouncer *debounce.Debouncer
-	nodes     map[string]corev1.Node
+	nodes     map[string]*corev1.Node
 	Mutex     sync.RWMutex
 	Events    chan event.GenericEvent
-	firstRun  bool
 	timeout   time.Duration
 
 	NodeReconcilerReady chan bool
@@ -44,7 +43,7 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 	reconciler := &NodeReconciler{
 		client:              clusterClient,
 		logger:              logger,
-		nodes:               make(map[string]corev1.Node),
+		nodes:               make(map[string]*corev1.Node),
 		Events:              make(chan event.GenericEvent),
 		timeout:             timeout,
 		configManagerInform: cmInfo,
@@ -57,50 +56,50 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 }
 
 func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
-	nr.logger.Info("node reconciler started")
+	added, deleted, err := nr.Update(ctx)
+	if err != nil {
+		return fmt.Errorf("error updating node reconciler data: %w", err)
+	}
 
+	// inform config manager that nodes were deleted
+	if len(deleted) > 0 {
+		nr.logger.Info("nodes deleted - inform ConfigManager", "nodes", deleted)
+		nr.deleteNodeInform <- deleted
+	}
+
+	// inform config manager that new nodes were added
+	if len(added) > 0 {
+		nr.logger.Info("nodes added - inform ConfigManager", "nodes", added)
+		nr.configManagerInform <- true
+	}
+
+	return nil
+}
+
+func (nr *NodeReconciler) Update(ctx context.Context) (added, deleted []string, err error) {
 	nr.Mutex.Lock()
+	defer nr.Mutex.Unlock()
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, nr.timeout)
 	defer cancel()
 
 	currentNodes, err := nr.listNodes(timeoutCtx)
 	if err != nil {
-		return fmt.Errorf("error listing nodes: %w", err)
+		return nil, nil, fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	nr.logger.Info("listed nodes")
-
-	added, deleted := nr.checkNodeChanges(currentNodes)
+	added, deleted = nr.checkNodeChanges(currentNodes)
 	// save list of current nodes
 	nr.nodes = currentNodes
-	nr.Mutex.Unlock()
 
-	nr.logger.Info("checked changes")
-
-	// inform config manager that nodes were deleted
-	if len(deleted) > 0 {
-		nr.logger.Info("nodes deleted - send node info", "nodes", deleted)
-		nr.deleteNodeInform <- deleted
-
-	}
-
-	// inform config manager that new nodes were added
-	if len(added) > 0 {
-		nr.logger.Info("nodes added - send changes info", "nodes", added)
-		nr.configManagerInform <- true
-	}
-
-	nr.logger.Info("node reconciler run", "nodes number", len(nr.nodes))
-
-	return nil
+	return added, deleted, nil
 }
 
-func (nr *NodeReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
+func (nr *NodeReconciler) listNodes(ctx context.Context) (map[string]*corev1.Node, error) {
 	return ListNodes(ctx, nr.client)
 }
 
-func ListNodes(ctx context.Context, c client.Client) (map[string]corev1.Node, error) {
+func ListNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {
 	// list all nodes
 	list := &corev1.NodeList{}
 	if err := c.List(ctx, list); err != nil {
@@ -108,7 +107,7 @@ func ListNodes(ctx context.Context, c client.Client) (map[string]corev1.Node, er
 	}
 
 	// discard control-plane nodes and create map of nodes
-	nodes := make(map[string]corev1.Node)
+	nodes := make(map[string]*corev1.Node)
 	for i := range list.Items {
 		_, isControlPlane := list.Items[i].Labels[controlPlaneLabel]
 		if !isControlPlane {
@@ -117,7 +116,7 @@ func ListNodes(ctx context.Context, c client.Client) (map[string]corev1.Node, er
 				// TODO: Should taint node.kubernetes.io/not-ready be used instead of Conditions?
 				if list.Items[i].Status.Conditions[j].Type == corev1.NodeReady &&
 					list.Items[i].Status.Conditions[j].Status == corev1.ConditionTrue {
-					nodes[list.Items[i].Name] = list.Items[i]
+					nodes[list.Items[i].Name] = &list.Items[i]
 					break
 				}
 			}
@@ -127,13 +126,13 @@ func ListNodes(ctx context.Context, c client.Client) (map[string]corev1.Node, er
 	return nodes, nil
 }
 
-func (nr *NodeReconciler) checkNodeChanges(newState map[string]corev1.Node) (added, deleted []string) {
+func (nr *NodeReconciler) checkNodeChanges(newState map[string]*corev1.Node) (added, deleted []string) {
 	added = getDifference(newState, nr.nodes)
 	deleted = getDifference(nr.nodes, newState)
 	return added, deleted
 }
 
-func getDifference(first, second map[string]corev1.Node) []string {
+func getDifference(first, second map[string]*corev1.Node) []string {
 	diff := []string{}
 	for name := range first {
 		if _, exists := second[name]; !exists {
@@ -143,23 +142,12 @@ func getDifference(first, second map[string]corev1.Node) []string {
 	return diff
 }
 
-// nolint: gocritic
-func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
-	nr.logger.Info("getting nodes")
+func (nr *NodeReconciler) GetNodes() map[string]*corev1.Node {
 	nr.Mutex.RLock()
 	defer nr.Mutex.RUnlock()
-	currentNodes := make(map[string]corev1.Node)
+	currentNodes := make(map[string]*corev1.Node)
 	for k, v := range nr.nodes {
 		currentNodes[k] = v
 	}
 	return currentNodes
 }
-
-// func (nr *NodeReconciler) CheckIfNodeExists(name string) bool {
-// 	nr.logger.Info("checking if node exists", "node", name)
-// 	nr.Mutex.Lock()
-// 	defer nr.Mutex.Unlock()
-// 	_, exists := nr.nodes[name]
-// 	nr.logger.Info("status", "node", name, "exists", exists)
-// 	return exists
-// }
