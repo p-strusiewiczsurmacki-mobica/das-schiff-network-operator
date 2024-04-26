@@ -24,7 +24,7 @@ type NodeReconciler struct {
 	logger    logr.Logger
 	debouncer *debounce.Debouncer
 	nodes     map[string]corev1.Node
-	Mutex     sync.Mutex
+	Mutex     sync.RWMutex
 	Events    chan event.GenericEvent
 	firstRun  bool
 	timeout   time.Duration
@@ -46,8 +46,6 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 		logger:              logger,
 		nodes:               make(map[string]corev1.Node),
 		Events:              make(chan event.GenericEvent),
-		NodeReconcilerReady: make(chan bool),
-		firstRun:            true,
 		timeout:             timeout,
 		configManagerInform: cmInfo,
 		deleteNodeInform:    nodeDelInfo,
@@ -82,19 +80,15 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 
 	// inform config manager that nodes were deleted
 	if len(deleted) > 0 {
+		nr.logger.Info("nodes deleted - send node info", "nodes", deleted)
 		nr.deleteNodeInform <- deleted
-		nr.logger.Info("nodes deleted", "nodes", deleted)
+
 	}
 
 	// inform config manager that new nodes were added
 	if len(added) > 0 {
+		nr.logger.Info("nodes added - send changes info", "nodes", added)
 		nr.configManagerInform <- true
-		nr.logger.Info("add nodes", "number", len(added))
-	}
-
-	if nr.firstRun {
-		nr.NodeReconcilerReady <- true
-		nr.firstRun = false
 	}
 
 	nr.logger.Info("node reconciler run", "nodes number", len(nr.nodes))
@@ -103,9 +97,13 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 }
 
 func (nr *NodeReconciler) listNodes(ctx context.Context) (map[string]corev1.Node, error) {
+	return ListNodes(ctx, nr.client)
+}
+
+func ListNodes(ctx context.Context, c client.Client) (map[string]corev1.Node, error) {
 	// list all nodes
 	list := &corev1.NodeList{}
-	if err := nr.client.List(ctx, list); err != nil {
+	if err := c.List(ctx, list); err != nil {
 		return nil, fmt.Errorf("unable to list nodes: %w", err)
 	}
 
@@ -148,8 +146,8 @@ func getDifference(first, second map[string]corev1.Node) []string {
 // nolint: gocritic
 func (nr *NodeReconciler) GetNodes() map[string]corev1.Node {
 	nr.logger.Info("getting nodes")
-	nr.Mutex.Lock()
-	defer nr.Mutex.Unlock()
+	nr.Mutex.RLock()
+	defer nr.Mutex.RUnlock()
 	currentNodes := make(map[string]corev1.Node)
 	for k, v := range nr.nodes {
 		currentNodes[k] = v

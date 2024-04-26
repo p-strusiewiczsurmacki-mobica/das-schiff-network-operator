@@ -88,7 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _, err = setupReconcilers(mgr, timeout, limit)
+	_, _, err = setupReconcilers(mgr, timeout)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
@@ -101,20 +101,24 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
+	timoutVal, err := time.ParseDuration(timeout)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
+	}
 	cmInfo := make(chan bool)
 	nodeDelInfo := make(chan []string)
-	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), time.Second*60, cmInfo)
+	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal, cmInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), time.Second*60, cmInfo, nodeDelInfo)
+	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), timoutVal, cmInfo, nodeDelInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
-	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), cmInfo, nodeDelInfo)
+	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, cmInfo, nodeDelInfo)
 
 	if err := mgr.Add(newOnLeaderElectionEvent(cr, nr, cm)); err != nil {
 		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
@@ -207,8 +211,24 @@ func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 }
 
 func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
-	go e.cm.WatchDeletedNodes()
-	go e.cm.WatchConfigs()
+	setupLog.Info("nn leader election event started")
+	if err := e.cm.DirtyStartup(ctx); err != nil {
+		return fmt.Errorf("error while checking previous leader work: %w", err)
+	}
+
+	watchNodesErr := make(chan error)
+	watchConfigsErr := make(chan error)
+	go e.cm.WatchDeletedNodes(ctx, watchNodesErr)
+	go e.cm.WatchConfigs(ctx, watchConfigsErr)
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("onLeaderElection context error: %w", ctx.Err())
+	case err := <-watchNodesErr:
+		return fmt.Errorf("node watcher error: %w", err)
+	case err := <-watchConfigsErr:
+		return fmt.Errorf("config watcher error: %w", err)
+	}
 	// setupLog.Info("On leader election event started")
 	// <-e.nr.NodeReconcilerReady
 	// close(e.nr.NodeReconcilerReady)
@@ -222,6 +242,4 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 	// e.cr.OnLeaderElectionDone <- true
 
 	// setupLog.Info("onLeaderElectionEvent is done")
-
-	return nil
 }

@@ -92,7 +92,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 
 	cr.configManagerInform <- true
 
-	cr.logger.Info("global config updated")
+	cr.logger.Info("global config updated", "config", *cr.globalCfg)
 	return nil
 }
 
@@ -176,6 +176,8 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 			i--
 		}
 	}
+
+	cr.logger.Info("config for node", "node", name, "config", *c)
 
 	// set config as next config for the node
 	return c, nil
