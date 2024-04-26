@@ -197,6 +197,9 @@ func (nc *Config) SetBackupAsNext() bool {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
 	if nc.backup != nil {
+		if nc.next == nil {
+			nc.next = v1alpha1.NewEmptyConfig(nc.current.Name)
+		}
 		v1alpha1.CopyNodeConfig(nc.backup, nc.next, nc.current.Name)
 		return true
 	}
