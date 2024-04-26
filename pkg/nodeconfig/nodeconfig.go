@@ -21,7 +21,6 @@ const (
 	StatusProvisioned  = "provisioned"
 	statusEmpty        = ""
 
-	DefaultTimeout         = "60s"
 	DefaultNodeUpdateLimit = 1
 	defaultCooldownTime    = 100 * time.Millisecond
 
@@ -54,7 +53,11 @@ func (nc *Config) SetCancelFunc(f context.CancelFunc) {
 }
 
 func (nc *Config) GetCancelFunc() context.CancelFunc {
-	return *nc.cancelFunc.Load()
+	f := nc.cancelFunc.Load()
+	if f != nil {
+		return *f
+	}
+	return nil
 }
 
 func (nc *Config) GetName() string {
@@ -83,6 +86,18 @@ func (nc *Config) GetDeployed() bool {
 	return nc.deployed.Load()
 }
 
+func (nc *Config) GetNext() *v1alpha1.NodeConfig {
+	nc.mtx.RLock()
+	defer nc.mtx.RUnlock()
+	return nc.next
+}
+
+func (nc *Config) GetInvalid() *v1alpha1.NodeConfig {
+	nc.mtx.RLock()
+	defer nc.mtx.RUnlock()
+	return nc.invalid
+}
+
 func (nc *Config) GetCurrentConfigStatus() string {
 	nc.mtx.RLock()
 	defer nc.mtx.RUnlock()
@@ -107,7 +122,7 @@ func NewEmpty(name string) *Config {
 	return nc
 }
 
-func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger) error {
+func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger, invalidationTimeout time.Duration) error {
 	nc.mtx.Lock()
 
 	if nc.next == nil {
@@ -134,7 +149,7 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 
 	nc.mtx.Unlock()
 
-	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, statusEmpty, err)
 	}
 
@@ -142,11 +157,11 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 		return fmt.Errorf("error updating status of config %s to %s: %w", nc.name, StatusProvisioning, err)
 	}
 
-	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
-	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
@@ -273,9 +288,8 @@ func (nc *Config) Prune(ctx context.Context, c client.Client) error {
 	return nil
 }
 
-func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool, logger logr.Logger) error {
-	nc.mtx.RLock()
-	defer nc.mtx.RUnlock()
+func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig,
+	expectedStatus string, failIfInvalid bool, logger logr.Logger, invalidationTimeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -285,10 +299,27 @@ func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1
 				logger.Info("context cancelled", "ctx.Err()", ctx.Err())
 				return nil
 			}
+
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				logger.Info("context timeout", "ctx.Err()", ctx.Err())
+				statusCtx, statusCancel := context.WithTimeout(context.Background(), invalidationTimeout)
+				defer statusCancel()
+				if err := nc.updateStatus(statusCtx, c, config, StatusInvalid); err != nil {
+					return fmt.Errorf("error setting config %s status %s: %w", config.GetName(), StatusInvalid, err)
+				}
+
+				if err := nc.waitForConfig(statusCtx, c, config, StatusInvalid, false, logger, invalidationTimeout); err != nil {
+					return fmt.Errorf("error waiting for config %s status %s: %w", config.GetName(), StatusInvalid, err)
+				}
+
+				return fmt.Errorf("context timeout: %w", ctx.Err())
+			}
 			// return error if there was different error than cancel
 			return fmt.Errorf("context error: %w", ctx.Err())
 		default:
+			nc.mtx.Lock()
 			err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config)
+			nc.mtx.Unlock()
 			if err == nil {
 				// Accept any status ("") or expected status
 				if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus {

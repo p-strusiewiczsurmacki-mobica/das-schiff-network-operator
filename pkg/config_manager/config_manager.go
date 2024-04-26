@@ -33,7 +33,8 @@ type ConfigManager struct {
 	timeout      time.Duration
 }
 
-func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler, log logr.Logger, timeout time.Duration, changes chan bool, deleteNodes chan []string) *ConfigManager {
+func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler, log logr.Logger,
+	timeout time.Duration, changes chan bool, deleteNodes chan []string) *ConfigManager {
 	return &ConfigManager{
 		client:       c,
 		configs:      configmap.New(),
@@ -96,7 +97,7 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 			if err != nil {
 				cm.logger.Error(err, "error deploying configs")
 				if err := cm.RestoreBackup(ctx); err != nil {
-					errCh <- fmt.Errorf("error restorigng backup: %w", err)
+					cm.logger.Error(err, "error restoring backup")
 				}
 			}
 		default:
@@ -132,6 +133,10 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 		cfg.SetDeployed(false)
 	}
 
+	if err := cm.validateConfigs(configs); err != nil {
+		return fmt.Errorf("error validating configs: %w", err)
+	}
+
 	if err := cm.setProcessStatus(ctx, nodeconfig.StatusProvisioning); err != nil {
 		return fmt.Errorf("error setting process status: %w", err)
 	}
@@ -141,7 +146,7 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 		if cfg.GetActive() {
 			cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
 			cfg.SetCancelFunc(cfgCancel)
-			if err := cfg.Deploy(cfgContext, cm.client, cm.logger); err != nil {
+			if err := cfg.Deploy(cfgContext, cm.client, cm.logger, cm.timeout); err != nil {
 				if err := cfg.CrateInvalid(ctx, cm.client); err != nil {
 					return fmt.Errorf("error creating invalid config object: %w", err)
 				}
@@ -154,6 +159,31 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 		return fmt.Errorf("error setting process status: %w", err)
 	}
 
+	return nil
+}
+
+func (cm *ConfigManager) validateConfigs(configs []*nodeconfig.Config) error {
+	cm.logger.Info("validating configs...")
+	for _, cfg := range configs {
+		if !cfg.GetActive() {
+			continue
+		}
+
+		next := cfg.GetNext()
+		if next != nil {
+			cm.logger.Info("next config", "config", *next)
+		}
+		invalid := cfg.GetInvalid()
+		if invalid != nil {
+			cm.logger.Info("invalid config", "config", *invalid)
+		}
+
+		if invalid != nil && next != nil {
+			if next.IsEqual(invalid) {
+				return fmt.Errorf("config for node %s results in invalid config", cfg.GetName())
+			}
+		}
+	}
 	return nil
 }
 
@@ -250,16 +280,22 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 		var invalid *v1alpha1.NodeConfig
 		for j := range knownConfigs.Items {
 			if knownConfigs.Items[j].Name == name {
+				cm.logger.Info("found current config", "node", name)
 				current = &knownConfigs.Items[j]
 			}
-			if knownConfigs.Items[j].Name == name+nodeconfig.InvalidSuffix {
-				invalid = &knownConfigs.Items[j]
-			}
 			if knownConfigs.Items[j].Name == name+nodeconfig.BackupSuffix {
+				cm.logger.Info("found backup config", "node", name)
 				backup = &knownConfigs.Items[j]
+			}
+			if knownConfigs.Items[j].Name == name+nodeconfig.InvalidSuffix {
+				cm.logger.Info("found invalid config", "node", name)
+				invalid = &knownConfigs.Items[j]
 			}
 		}
 		cfg := nodeconfig.New(name, current, backup, invalid)
+		if backup != nil {
+			cfg.SetDeployed(true)
+		}
 		cm.configs.Add(name, cfg)
 		cm.logger.Info("adding config", "node", name)
 	}
