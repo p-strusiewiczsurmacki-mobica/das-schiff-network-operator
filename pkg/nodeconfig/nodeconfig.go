@@ -2,11 +2,13 @@ package nodeconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -14,17 +16,17 @@ import (
 )
 
 const (
-	statusProvisioning = "provisioning"
-	statusInvalid      = "invalid"
-	statusProvisioned  = "provisioned"
+	StatusProvisioning = "provisioning"
+	StatusInvalid      = "invalid"
+	StatusProvisioned  = "provisioned"
 	statusEmpty        = ""
 
 	DefaultTimeout         = "60s"
 	DefaultNodeUpdateLimit = 1
 	defaultCooldownTime    = 100 * time.Millisecond
 
-	invalidSuffix = "-invalid"
-	backupSuffix  = "-backup"
+	InvalidSuffix = "-invalid"
+	BackupSuffix  = "-backup"
 )
 
 type Config struct {
@@ -33,10 +35,10 @@ type Config struct {
 	next       *v1alpha1.NodeConfig
 	backup     *v1alpha1.NodeConfig
 	invalid    *v1alpha1.NodeConfig
-	cancelFunc context.CancelFunc
 	mtx        sync.RWMutex
 	active     atomic.Bool
 	deployed   atomic.Bool
+	cancelFunc atomic.Pointer[context.CancelFunc]
 }
 
 func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
@@ -48,15 +50,11 @@ func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
 }
 
 func (nc *Config) SetCancelFunc(f context.CancelFunc) {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
-	nc.cancelFunc = f
+	nc.cancelFunc.Store(&f)
 }
 
 func (nc *Config) GetCancelFunc() context.CancelFunc {
-	nc.mtx.RLock()
-	defer nc.mtx.RUnlock()
-	return nc.cancelFunc
+	return *nc.cancelFunc.Load()
 }
 
 func (nc *Config) GetName() string {
@@ -66,14 +64,10 @@ func (nc *Config) GetName() string {
 }
 
 func (nc *Config) GetActive() bool {
-	nc.mtx.RLock()
-	defer nc.mtx.RUnlock()
 	return nc.active.Load()
 }
 
 func (nc *Config) SetActive(value bool) {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
 	nc.active.Store(value)
 }
 
@@ -95,99 +89,111 @@ func (nc *Config) GetCurrentConfigStatus() string {
 	return nc.current.Status.ConfigStatus
 }
 
-func (nc *Config) Update(current, backup, invalid *v1alpha1.NodeConfig) {
-	nc.UpdateCurrent(current)
-	nc.UpdateBackup(backup)
-	nc.UpdateInvalid(invalid)
-}
-
-func (nc *Config) UpdateCurrent(current *v1alpha1.NodeConfig) {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
-	nc.current = current
-}
-
-func (nc *Config) UpdateBackup(backup *v1alpha1.NodeConfig) {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
-	nc.backup = backup
-}
-
-func (nc *Config) UpdateInvalid(invalid *v1alpha1.NodeConfig) {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
-	nc.backup = invalid
-}
-
 func (nc *Config) UpdateNext(next *v1alpha1.NodeConfig) {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
-	nc.next = next
+	if nc.next == nil {
+		nc.next = v1alpha1.NewEmptyConfig(nc.name)
+	}
+	v1alpha1.CopyNodeConfig(next, nc.next, nc.name)
 }
 
 func NewEmpty(name string) *Config {
 	nc := &Config{
 		name:    name,
-		current: &v1alpha1.NodeConfig{},
+		current: v1alpha1.NewEmptyConfig(name),
 	}
 	nc.active.Store(true)
 	return nc
 }
 
-func (nc *Config) Deploy(ctx context.Context, c client.Client) error {
+func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger) error {
 	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
+
+	if nc.next == nil {
+		nc.next = v1alpha1.NewEmptyConfig(nc.name)
+	}
 
 	if !nc.active.Load() {
+		logger.Info("node set as inactive", "node", nc.name)
 		return nil
 	}
-	if nc.current != nil && nc.current.Name != "" {
-		// config already exists - update
-		// check if new config is equal to existing config
-		// if so, skip the update as nothing has to be updated
-		if nc.next.IsEqual(nc.current) {
-			return nil
-		}
-		v1alpha1.CopyNodeConfig(nc.next, nc.current, nc.name)
-		if err := updateConfig(ctx, c, nc.current); err != nil {
-			return fmt.Errorf("error updating NodeConfig object: %w", err)
-		}
-	} else {
+
+	if nc.current == nil {
 		nc.current = v1alpha1.NewEmptyConfig(nc.name)
-		v1alpha1.CopyNodeConfig(nc.next, nc.current, nc.current.Name)
-		// config does not exist - create
-		if err := c.Create(ctx, nc.current); err != nil {
-			return fmt.Errorf("error creating NodeConfig object: %w", err)
-		}
+	}
+
+	if err := createOrUpdate(ctx, c, nc.current, nc.next, logger); err != nil {
+		return fmt.Errorf("error configuring node config object: %w", err)
 	}
 
 	nc.deployed.Store(true)
 
-	if err := waitForConfig(ctx, c, nc.current, statusEmpty, false); err != nil {
+	if err := nc.CreateBackup(ctx, c); err != nil {
+		return fmt.Errorf("error creating backup config: %w", err)
+	}
+	nc.mtx.Unlock()
+
+	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger); err != nil {
 		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, statusEmpty, err)
 	}
 
-	if err := updateStatus(ctx, c, nc.current, statusProvisioning); err != nil {
-		return fmt.Errorf("error updateing status of config %s to %s: %w", nc.name, statusProvisioning, err)
+	if err := nc.updateStatus(ctx, c, nc.current, StatusProvisioning, logger); err != nil {
+		return fmt.Errorf("error updateing status of config %s to %s: %w", nc.name, StatusProvisioning, err)
 	}
 
-	if err := waitForConfig(ctx, c, nc.current, statusProvisioning, true); err != nil {
-		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, statusProvisioning, err)
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger); err != nil {
+		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, StatusProvisioning, err)
+	}
+
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger); err != nil {
+		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
 	return nil
 }
 
-func (nc *Config) SetBackupAsNext() {
+func createOrUpdate(ctx context.Context, c client.Client, current, next *v1alpha1.NodeConfig, logger logr.Logger) error {
+	if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil && apierrors.IsNotFound(err) {
+		logger.Info("current (new)", "node", current.Name, "config", *next)
+		v1alpha1.CopyNodeConfig(next, current, current.Name)
+		// config does not exist - create
+		if err := c.Create(ctx, current); err != nil {
+			return fmt.Errorf("error creating NodeConfig object: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("error getting current config: %w", err)
+	} else {
+		logger.Info("deploy", "node", current.Name)
+		// config already exists - update
+		// check if new config is equal to existing config
+		// if so, skip the update as nothing has to be updated
+		if next.IsEqual(current) {
+			logger.Info("is equal", "config", current.Name)
+			return nil
+		}
+		logger.Info("current", "node", current.Name, "config", *next)
+		v1alpha1.CopyNodeConfig(next, current, current.Name)
+		logger.Info("current", "node", current, "config", *next)
+		if err := updateConfig(ctx, c, current); err != nil {
+			return fmt.Errorf("error updating NodeConfig object: %w", err)
+		}
+	}
+	return nil
+}
+
+func (nc *Config) SetBackupAsNext() bool {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
-	v1alpha1.CopyNodeConfig(nc.backup, nc.next, nc.current.Name)
+	if nc.backup != nil {
+		v1alpha1.CopyNodeConfig(nc.backup, nc.next, nc.current.Name)
+		return true
+	}
+	return false
 }
 
 func (nc *Config) CreateBackup(ctx context.Context, c client.Client) error {
-	nc.mtx.Lock()
-	defer nc.mtx.Unlock()
-	backupName := nc.name + backupSuffix
+	backupName := nc.name + BackupSuffix
 	createNew := false
 	if nc.backup == nil {
 		nc.backup = v1alpha1.NewEmptyConfig(backupName)
@@ -221,7 +227,7 @@ func (nc *Config) CreateBackup(ctx context.Context, c client.Client) error {
 func (nc *Config) CrateInvalid(ctx context.Context, c client.Client) error {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
-	invalidName := fmt.Sprintf("%s%s", nc.name, invalidSuffix)
+	invalidName := fmt.Sprintf("%s%s", nc.name, InvalidSuffix)
 
 	if nc.invalid == nil {
 		nc.invalid = v1alpha1.NewEmptyConfig(invalidName)
@@ -249,44 +255,82 @@ func (nc *Config) CrateInvalid(ctx context.Context, c client.Client) error {
 	return nil
 }
 
-func waitForConfig(ctx context.Context, c client.Client, instance *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool) error {
+func (nc *Config) Prune(ctx context.Context, c client.Client) error {
+	nc.mtx.Lock()
+	defer nc.mtx.Unlock()
+
+	if nc.current != nil {
+		if err := c.Delete(ctx, nc.current); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error deleting current config: %w", err)
+		}
+	}
+	if nc.backup != nil {
+		if err := c.Delete(ctx, nc.backup); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error deleting backup config: %w", err)
+		}
+	}
+	if nc.invalid != nil {
+		if err := c.Delete(ctx, nc.invalid); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error deleting invalid config: %w", err)
+		}
+	}
+	return nil
+}
+
+func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, expectedStatus string, failIfInvalid bool, logger logr.Logger) error {
+	nc.mtx.RLock()
+	defer nc.mtx.RUnlock()
 	for {
 		select {
 		case <-ctx.Done():
-			// return if context is done (e.g. cancelled)
+			// contex cancelled means that node was removed
+			// don't report error here
+			if errors.Is(ctx.Err(), context.Canceled) {
+				logger.Info("context cancelled", "ctx.Err()", ctx.Err())
+				return nil
+			}
+			// return error if there was diferent error than cancel
 			return fmt.Errorf("context error: %w", ctx.Err())
 		default:
-			err := c.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, instance)
+			err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config)
 			if err == nil {
 				// Accept any status ("") or expected status
-				if expectedStatus == "" || instance.Status.ConfigStatus == expectedStatus {
+				if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus {
+					logger.Info("got expected status", "node", config.Name, "status", expectedStatus)
 					return nil
 				}
 
 				// return error if status is invalid
-				if failIfInvalid && instance.Status.ConfigStatus == statusInvalid {
-					return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", instance.Name, instance.Status.ConfigStatus)
+				if failIfInvalid && config.Status.ConfigStatus == StatusInvalid {
+					return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", config.Name, config.Status.ConfigStatus)
 				}
 			}
+			logger.Info("waiting for config", "node", config.Name, "status", expectedStatus)
 			time.Sleep(defaultCooldownTime)
 		}
 	}
 }
 
-func updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string) error {
+func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string, logger logr.Logger) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("status update error: %w", ctx.Err())
 		default:
+			logger.Info("waiting for status update", "node", config.Name, "status", status)
+			nc.mtx.Lock()
 			config.Status.ConfigStatus = status
 			err := c.Status().Update(ctx, config)
+			nc.mtx.Unlock()
 			if err != nil {
 				if apierrors.IsConflict(err) {
 					// if there is a conflict, update local copy of the config
+					nc.mtx.Lock()
 					if getErr := c.Get(ctx, client.ObjectKeyFromObject(config), config); getErr != nil {
+						nc.mtx.Unlock()
 						return fmt.Errorf("error updating status: %w", getErr)
 					}
+					nc.mtx.Unlock()
 					time.Sleep(defaultCooldownTime)
 					continue
 				}
@@ -302,18 +346,18 @@ func updateConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeCon
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("status update error: %w", ctx.Err())
+			return fmt.Errorf("config update error (context): %w", ctx.Err())
 		default:
 			if err := c.Update(ctx, config); err != nil {
 				if apierrors.IsConflict(err) {
 					// if there is a conflict, update local copy of the config
-					if getErr := c.Get(ctx, client.ObjectKeyFromObject(config), config); getErr != nil {
-						return fmt.Errorf("error updating status: %w", getErr)
+					if err := c.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
+						return fmt.Errorf("config update error (conflict): %w", err)
 					}
 					time.Sleep(defaultCooldownTime)
 					continue
 				}
-				return fmt.Errorf("status update error: %w", err)
+				return fmt.Errorf("config update error (error): %w", err)
 			} else {
 				return nil
 			}
