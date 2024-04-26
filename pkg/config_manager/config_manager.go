@@ -12,7 +12,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -46,7 +46,7 @@ func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeRe
 	}
 }
 
-func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error) error {
+func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error) {
 	cm.logger.Info("starting watching for delete nodes...")
 	for {
 		select {
@@ -61,16 +61,15 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 				config := cm.configs.Get(n)
 				cm.configs.Remove(n)
 				config.SetActive(false)
-				cm.logger.Info("Get cancel func")
 				cancel := config.GetCancelFunc()
 				if cancel != nil {
 					cancel()
-					cm.logger.Info("cancel function called")
 				}
 				err := config.Prune(ctx, cm.client)
 				if err != nil {
 					cm.logger.Error(err, "error deleting node configuration objects")
 				}
+				cm.logger.Info("removed node data", "name", n)
 			}
 		default:
 			time.Sleep(defaultCooldownTime)
@@ -88,7 +87,7 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 			}
 			errCh <- nil
 		case <-cm.changes:
-			cm.logger.Info("changes occurred")
+			cm.logger.Info("got notification about changes")
 			err := cm.UpdateConfigs()
 			if err != nil {
 				errCh <- fmt.Errorf("error updating configs: %w", err)
@@ -107,30 +106,28 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 }
 
 func (cm *ConfigManager) UpdateConfigs() error {
-	cm.logger.Info("UpdateConfigs()")
+	cm.logger.Info("updating configs...")
 	currentNodes := cm.nr.GetNodes()
 	for name := range currentNodes {
-		cm.logger.Info("Creating config for node", "name", name)
 		n := currentNodes[name]
-		next, err := cm.cr.CreateConfigForNode(name, &n)
+		next, err := cm.cr.CreateConfigForNode(name, n)
 		if err != nil {
 			return fmt.Errorf("error creating config for the node %s: %w", name, err)
 		}
 		if cfg := cm.configs.Get(name); cfg != nil {
-			cm.logger.Info("Updating", "name", name)
 			cfg.UpdateNext(next)
 		} else {
-			cm.logger.Info("creating", "name", name)
 			cfg = nodeconfig.NewEmpty(name)
 			cfg.UpdateNext(next)
 			cm.configs.Add(name, cfg)
 		}
+		cm.logger.Info("set up config for node", "name", name)
 	}
+	cm.logger.Info("configs updated")
 	return nil
 }
 
 func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Config) error {
-	cm.logger.Info("Deploy()")
 	for _, cfg := range configs {
 		cfg.SetDeployed(false)
 	}
@@ -140,12 +137,10 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 	}
 
 	for _, cfg := range configs {
-		cm.logger.Info("processing", "name", cfg.GetName())
+		cm.logger.Info("processing config", "name", cfg.GetName())
 		if cfg.GetActive() {
-			cm.logger.Info("is active", "name", cfg.GetName())
 			cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
 			cfg.SetCancelFunc(cfgCancel)
-			cm.logger.Info("cancel func set", "name", cfg.GetName())
 			if err := cfg.Deploy(cfgContext, cm.client, cm.logger); err != nil {
 				if err := cfg.CrateInvalid(ctx, cm.client); err != nil {
 					return fmt.Errorf("error creating invalid config object: %w", err)
@@ -163,6 +158,7 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 }
 
 func (cm *ConfigManager) setProcessStatus(ctx context.Context, status string) error {
+	cm.logger.Info("setting process status", "status", status)
 	process, err := cm.getProcess(ctx)
 	if err != nil && apierrors.IsNotFound(err) {
 		process.Spec.State = status
@@ -170,17 +166,18 @@ func (cm *ConfigManager) setProcessStatus(ctx context.Context, status string) er
 			return fmt.Errorf("error creating process object: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("error getting proces object: %w", err)
+		return fmt.Errorf("error getting process object: %w", err)
 	}
 	process.Spec.State = status
 	if err := cm.client.Update(ctx, process); err != nil {
 		return fmt.Errorf("error updating process object: %w", err)
 	}
+	cm.logger.Info("process status set", "status", status)
 	return nil
 }
 
 func (cm *ConfigManager) DeployConfigs(ctx context.Context) error {
-	cm.logger.Info("DeployConfigs()")
+	cm.logger.Info("deploying configs ...")
 	toDeploy := cm.configs.GetSlice()
 
 	if err := cm.Deploy(ctx, toDeploy); err != nil {
@@ -191,7 +188,7 @@ func (cm *ConfigManager) DeployConfigs(ctx context.Context) error {
 }
 
 func (cm *ConfigManager) RestoreBackup(ctx context.Context) error {
-	cm.logger.Info("RestoreBackup()")
+	cm.logger.Info("restoring backup...")
 	slice := cm.configs.GetSlice()
 	toDeploy := []*nodeconfig.Config{}
 	for _, cfg := range slice {
@@ -206,12 +203,13 @@ func (cm *ConfigManager) RestoreBackup(ctx context.Context) error {
 		return fmt.Errorf("error deploying configs: %w", err)
 	}
 
+	cm.logger.Info("backup restored")
 	return nil
 }
 
 func (cm *ConfigManager) getProcess(ctx context.Context) (*v1alpha1.NodeConfigProcess, error) {
 	process := &v1alpha1.NodeConfigProcess{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: processName,
 		},
 	}
@@ -228,27 +226,24 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 		// process object does not exists - there was no operator running on this cluster before
 		if apierrors.IsNotFound(err) {
 			return nil
-		} else {
-			return fmt.Errorf("error geting process object: %w", err)
 		}
+		return fmt.Errorf("error getting process object: %w", err)
 	}
 
-	cm.logger.Info("restoring previous leader work")
+	cm.logger.Info("previous leader left cluster in state", "state", process.Spec.State)
+	cm.logger.Info("using data left by previous leader...")
 
 	// get all known backup data and deploy it
-	cm.logger.Info("listing all worker nodes")
 	nodes, err := reconciler.ListNodes(ctx, cm.client)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	cm.logger.Info("listing all nodeconfigs")
 	knownConfigs := &v1alpha1.NodeConfigList{}
 	if err := cm.client.List(ctx, knownConfigs); err != nil {
 		return fmt.Errorf("error listing NodeConfigs: %w", err)
 	}
 
-	cm.logger.Info("processing items")
 	for name := range nodes {
 		var current *v1alpha1.NodeConfig
 		var backup *v1alpha1.NodeConfig
@@ -265,13 +260,12 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 			}
 		}
 		cfg := nodeconfig.New(name, current, backup, invalid)
-		cm.logger.Info("adding config for node", "name", name)
 		cm.configs.Add(name, cfg)
+		cm.logger.Info("adding config", "node", name)
 	}
 
 	if process.Spec.State == nodeconfig.StatusProvisioning {
 		// prevouos leader left cluster in provisioning state - cleanup
-		cm.logger.Info("cleanup needed - restoring backup")
 		if err := cm.RestoreBackup(ctx); err != nil {
 			return fmt.Errorf("error restoring backup: %w", err)
 		}

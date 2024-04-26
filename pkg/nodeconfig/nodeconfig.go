@@ -115,7 +115,6 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 	}
 
 	if !nc.active.Load() {
-		logger.Info("node set as inactive", "node", nc.name)
 		return nil
 	}
 
@@ -132,22 +131,23 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 	if err := nc.CreateBackup(ctx, c); err != nil {
 		return fmt.Errorf("error creating backup config: %w", err)
 	}
+
 	nc.mtx.Unlock()
 
 	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger); err != nil {
-		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, statusEmpty, err)
+		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, statusEmpty, err)
 	}
 
-	if err := nc.updateStatus(ctx, c, nc.current, StatusProvisioning, logger); err != nil {
-		return fmt.Errorf("error updateing status of config %s to %s: %w", nc.name, StatusProvisioning, err)
+	if err := nc.updateStatus(ctx, c, nc.current, StatusProvisioning); err != nil {
+		return fmt.Errorf("error updating status of config %s to %s: %w", nc.name, StatusProvisioning, err)
 	}
 
 	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger); err != nil {
-		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, StatusProvisioning, err)
+		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
 	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger); err != nil {
-		return fmt.Errorf("error wating for config %s with status %s: %w", nc.name, StatusProvisioning, err)
+		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
 	return nil
@@ -155,7 +155,6 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 
 func createOrUpdate(ctx context.Context, c client.Client, current, next *v1alpha1.NodeConfig, logger logr.Logger) error {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil && apierrors.IsNotFound(err) {
-		logger.Info("current (new)", "node", current.Name, "config", *next)
 		v1alpha1.CopyNodeConfig(next, current, current.Name)
 		// config does not exist - create
 		if err := c.Create(ctx, current); err != nil {
@@ -164,17 +163,14 @@ func createOrUpdate(ctx context.Context, c client.Client, current, next *v1alpha
 	} else if err != nil {
 		return fmt.Errorf("error getting current config: %w", err)
 	} else {
-		logger.Info("deploy", "node", current.Name)
 		// config already exists - update
 		// check if new config is equal to existing config
 		// if so, skip the update as nothing has to be updated
 		if next.IsEqual(current) {
-			logger.Info("is equal", "config", current.Name)
+			logger.Info("new config is equal to current config, skipping...", "config", current.Name)
 			return nil
 		}
-		logger.Info("current", "node", current.Name, "config", *next)
 		v1alpha1.CopyNodeConfig(next, current, current.Name)
-		logger.Info("current", "node", current, "config", *next)
 		if err := updateConfig(ctx, c, current); err != nil {
 			return fmt.Errorf("error updating NodeConfig object: %w", err)
 		}
@@ -289,7 +285,7 @@ func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1
 				logger.Info("context cancelled", "ctx.Err()", ctx.Err())
 				return nil
 			}
-			// return error if there was diferent error than cancel
+			// return error if there was different error than cancel
 			return fmt.Errorf("context error: %w", ctx.Err())
 		default:
 			err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config)
@@ -305,19 +301,17 @@ func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1
 					return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", config.Name, config.Status.ConfigStatus)
 				}
 			}
-			logger.Info("waiting for config", "node", config.Name, "status", expectedStatus)
 			time.Sleep(defaultCooldownTime)
 		}
 	}
 }
 
-func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string, logger logr.Logger) error {
+func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("status update error: %w", ctx.Err())
 		default:
-			logger.Info("waiting for status update", "node", config.Name, "status", status)
 			nc.mtx.Lock()
 			config.Status.ConfigStatus = status
 			err := c.Status().Update(ctx, config)

@@ -16,6 +16,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/frr"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
+	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -120,7 +121,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// config is invalid or was already provisioned - discard
-	if cfg.Status.ConfigStatus != statusProvisioning {
+	if cfg.Status.ConfigStatus != nodeconfig.StatusProvisioning {
 		return nil
 	}
 
@@ -145,7 +146,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// set config status as provisioned (valid)
-	cfg.Status.ConfigStatus = statusProvisioned
+	cfg.Status.ConfigStatus = nodeconfig.StatusProvisioned
 	if err = r.client.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
@@ -160,7 +161,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 }
 
 func (r *reconcile) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeConfig) error {
-	cfg.Status.ConfigStatus = statusInvalid
+	cfg.Status.ConfigStatus = nodeconfig.StatusInvalid
 	if err := r.client.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}

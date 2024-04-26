@@ -17,19 +17,8 @@ import (
 )
 
 const (
-	statusProvisioning = "provisioning"
-	statusInvalid      = "invalid"
-	statusProvisioned  = "provisioned"
-	statusEmpty        = ""
-
 	DefaultTimeout         = "60s"
 	DefaultNodeUpdateLimit = 1
-	defaultCooldownTime    = 100 * time.Millisecond
-
-	invalidSuffix = "-invalid"
-	backupSuffix  = "-backup"
-
-	processName = "network-operator"
 )
 
 // ConfigReconciler is responsible for creating NodeConfig objects.
@@ -72,7 +61,6 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 }
 
 func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
-
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
 		Logger:           cr.logger,
@@ -90,6 +78,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error fetching configuration details: %w", err)
 	}
 
+	// inform config manager that it should update
 	cr.configManagerInform <- true
 
 	cr.logger.Info("global config updated", "config", *cr.globalCfg)
@@ -652,7 +641,7 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 // 			cr.logger.Info("error converting interface")
 // 			return nil, fmt.Errorf("error converting interface to nodeConfiguration pointer")
 // 		}
-// 		cr.logger.Info("coverted good")
+// 		cr.logger.Info("converted good")
 // 		cr.logger.Info("porcessing", "config", v.name)
 // 		if !v.active.Load() {
 // 			cr.logger.Info("node is inactive", "node", v.name)
