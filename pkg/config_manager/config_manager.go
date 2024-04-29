@@ -360,13 +360,7 @@ func (cm *ConfigManager) loadConfigs(ctx context.Context) error {
 
 func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, knownConfigs *v1alpha1.NodeConfigList) {
 	for _, node := range nodes {
-		var current *v1alpha1.NodeConfig
-		var backup *v1alpha1.NodeConfig
-		var invalid *v1alpha1.NodeConfig
-		for i := range knownConfigs.Items {
-			current, backup, invalid = cm.assignConfigs(&knownConfigs.Items[i], node)
-		}
-
+		current, backup, invalid := cm.matchConfigs(knownConfigs, node)
 		cfg := nodeconfig.New(node.Name, current, backup, invalid)
 		if backup != nil {
 			cfg.SetDeployed(true)
@@ -375,20 +369,22 @@ func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, 
 	}
 }
 
-func (cm *ConfigManager) assignConfigs(config *v1alpha1.NodeConfig, node *corev1.Node) (current, backup, invalid *v1alpha1.NodeConfig) {
-	for j := range config.OwnerReferences {
-		if config.OwnerReferences[j].UID == node.UID {
-			if config.Name == node.Name {
-				cm.logger.Info("found current config", "node", node.Name)
-				current = config
-			}
-			if strings.Contains(config.Name, nodeconfig.InvalidSuffix) {
-				cm.logger.Info("found invalid config", "node", node.Name)
-				invalid = config
-			}
-			if strings.Contains(config.Name, nodeconfig.BackupSuffix) {
-				cm.logger.Info("found backup config", "node", node.Name)
-				backup = config
+func (cm *ConfigManager) matchConfigs(knownConfigs *v1alpha1.NodeConfigList, node *corev1.Node) (current, backup, invalid *v1alpha1.NodeConfig) {
+	for i := range knownConfigs.Items {
+		for j := range knownConfigs.Items[i].OwnerReferences {
+			if knownConfigs.Items[i].OwnerReferences[j].UID == node.UID {
+				if knownConfigs.Items[i].Name == node.Name {
+					cm.logger.Info("found current config", "node", node.Name)
+					current = &knownConfigs.Items[i]
+				}
+				if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.InvalidSuffix) {
+					cm.logger.Info("found invalid config", "node", node.Name)
+					invalid = &knownConfigs.Items[i]
+				}
+				if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.BackupSuffix) {
+					cm.logger.Info("found backup config", "node", node.Name)
+					backup = &knownConfigs.Items[i]
+				}
 			}
 		}
 	}
