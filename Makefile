@@ -129,7 +129,7 @@ install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~
 	$(KUSTOMIZE) build config/crd | kubectl apply -f -
 
 .PHONY: install-certs
-install-certs: manifests kustomize ## Install certs	
+install-certs: manifests kustomize ## Install certs
 	$(KUSTOMIZE) build config/certmanager | kubectl apply -f -
 
 .PHONY: uninstall
