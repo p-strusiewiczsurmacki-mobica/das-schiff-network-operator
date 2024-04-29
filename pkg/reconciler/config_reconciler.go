@@ -139,7 +139,7 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 
 	err := controllerutil.SetOwnerReference(node, c, scheme.Scheme)
 	if err != nil {
-		return nil, fmt.Errorf("error setting owner rferences: %w", err)
+		return nil, fmt.Errorf("error setting owner references: %w", err)
 	}
 
 	// prepare Layer2NetworkConfigurationSpec (l2Spec) for each node.

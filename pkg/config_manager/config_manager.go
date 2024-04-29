@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"golang.org/x/sync/semaphore"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -312,7 +313,7 @@ func (cm *ConfigManager) getProcess(ctx context.Context) (*v1alpha1.NodeConfigPr
 	return process, nil
 }
 
-// DirtyStartup will load all previously deployed NodeConfigs into current leader
+// DirtyStartup will load all previously deployed NodeConfigs into current leader.
 func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 	process, err := cm.getProcess(ctx)
 	if err != nil {
@@ -327,6 +328,21 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 	cm.logger.Info("using data left by previous leader...")
 
 	// get all known backup data and load it into config manager memory
+	if err := cm.loadConfigs(ctx); err != nil {
+		return fmt.Errorf("error loading configs: %w", err)
+	}
+
+	// prevouos leader left cluster in provisioning state - restore known backups
+	if process.Spec.State == nodeconfig.StatusProvisioning {
+		if err := cm.RestoreBackup(ctx); err != nil {
+			return fmt.Errorf("error restoring backup: %w", err)
+		}
+	}
+	return nil
+}
+
+func (cm *ConfigManager) loadConfigs(ctx context.Context) error {
+	// get all known backup data and load it into config manager memory
 	nodes, err := reconciler.ListNodes(ctx, cm.client)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
@@ -337,29 +353,18 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 		return fmt.Errorf("error listing NodeConfigs: %w", err)
 	}
 
-	// find configs by owner references
-	// TODO: can this be simplified?
+	cm.createConfigsFromBackup(nodes, knownConfigs)
+
+	return nil
+}
+
+func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, knownConfigs *v1alpha1.NodeConfigList) {
 	for _, node := range nodes {
 		var current *v1alpha1.NodeConfig
 		var backup *v1alpha1.NodeConfig
 		var invalid *v1alpha1.NodeConfig
 		for i := range knownConfigs.Items {
-			for j := range knownConfigs.Items[i].OwnerReferences {
-				if knownConfigs.Items[i].OwnerReferences[j].UID == node.UID {
-					if knownConfigs.Items[i].Name == node.Name {
-						cm.logger.Info("found current config", "node", node.Name)
-						current = &knownConfigs.Items[i]
-					}
-					if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.InvalidSuffix) {
-						cm.logger.Info("found invalid config", "node", node.Name)
-						invalid = &knownConfigs.Items[i]
-					}
-					if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.BackupSuffix) {
-						cm.logger.Info("found backup config", "node", node.Name)
-						backup = &knownConfigs.Items[i]
-					}
-				}
-			}
+			current, backup, invalid = cm.assignConfigs(&knownConfigs.Items[i], node)
 		}
 
 		cfg := nodeconfig.New(node.Name, current, backup, invalid)
@@ -368,12 +373,24 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 		}
 		cm.configs.Add(node.Name, cfg)
 	}
+}
 
-	// prevouos leader left cluster in provisioning state - restore known backups
-	if process.Spec.State == nodeconfig.StatusProvisioning {
-		if err := cm.RestoreBackup(ctx); err != nil {
-			return fmt.Errorf("error restoring backup: %w", err)
+func (cm *ConfigManager) assignConfigs(config *v1alpha1.NodeConfig, node *corev1.Node) (current, backup, invalid *v1alpha1.NodeConfig) {
+	for j := range config.OwnerReferences {
+		if config.OwnerReferences[j].UID == node.UID {
+			if config.Name == node.Name {
+				cm.logger.Info("found current config", "node", node.Name)
+				current = config
+			}
+			if strings.Contains(config.Name, nodeconfig.InvalidSuffix) {
+				cm.logger.Info("found invalid config", "node", node.Name)
+				invalid = config
+			}
+			if strings.Contains(config.Name, nodeconfig.BackupSuffix) {
+				cm.logger.Info("found backup config", "node", node.Name)
+				backup = config
+			}
 		}
 	}
-	return nil
+	return current, backup, invalid
 }
