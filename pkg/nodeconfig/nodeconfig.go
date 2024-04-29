@@ -26,6 +26,8 @@ const (
 
 	InvalidSuffix = "-invalid"
 	BackupSuffix  = "-backup"
+
+	ParentCtx contextKey = "parentCtx"
 )
 
 type Config struct {
@@ -39,6 +41,8 @@ type Config struct {
 	deployed   atomic.Bool
 	cancelFunc atomic.Pointer[context.CancelFunc]
 }
+
+type contextKey string
 
 func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
 	nc := NewEmpty(name)
@@ -149,7 +153,7 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 
 	nc.mtx.Unlock()
 
-	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger, invalidationTimeout); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger, false, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, statusEmpty, err)
 	}
 
@@ -157,11 +161,11 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 		return fmt.Errorf("error updating status of config %s to %s: %w", nc.name, StatusProvisioning, err)
 	}
 
-	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger, invalidationTimeout); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioning, false, logger, false, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
-	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger, invalidationTimeout); err != nil {
+	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger, true, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
 	}
 
@@ -292,52 +296,74 @@ func (nc *Config) Prune(ctx context.Context, c client.Client) error {
 }
 
 func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig,
-	expectedStatus string, failIfInvalid bool, logger logr.Logger, invalidationTimeout time.Duration) error {
+	expectedStatus string, failIfInvalid bool, logger logr.Logger, invalidate bool, invalidationTimeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// contex cancelled means that node was removed
-			// don't report error here
-			if errors.Is(ctx.Err(), context.Canceled) {
-				logger.Info("context cancelled", "ctx.Err()", ctx.Err())
+			return nc.handleContextDone(ctx, c, config, logger, invalidate, invalidationTimeout)
+		default:
+			if err := nc.apiUpdate(ctx, c, config); err != nil {
+				return fmt.Errorf("error updating API boject: %w", err)
+			}
+			// Accept any status ("") or expected status
+			if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus {
 				return nil
 			}
 
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				logger.Info("context timeout", "ctx.Err()", ctx.Err())
-				statusCtx, statusCancel := context.WithTimeout(context.Background(), invalidationTimeout)
-				defer statusCancel()
-				if err := nc.updateStatus(statusCtx, c, config, StatusInvalid); err != nil {
-					return fmt.Errorf("error setting config %s status %s: %w", config.GetName(), StatusInvalid, err)
-				}
-
-				if err := nc.waitForConfig(statusCtx, c, config, StatusInvalid, false, logger, invalidationTimeout); err != nil {
-					return fmt.Errorf("error waiting for config %s status %s: %w", config.GetName(), StatusInvalid, err)
-				}
-
-				return fmt.Errorf("context timeout: %w", ctx.Err())
-			}
-			// return error if there was different error than cancel
-			return fmt.Errorf("context error: %w", ctx.Err())
-		default:
-			nc.mtx.Lock()
-			err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config)
-			nc.mtx.Unlock()
-			if err == nil {
-				// Accept any status ("") or expected status
-				if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus {
-					logger.Info("got expected status", "node", config.Name, "status", expectedStatus)
-					return nil
-				}
-
-				// return error if status is invalid
-				if failIfInvalid && config.Status.ConfigStatus == StatusInvalid {
-					return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", config.Name, config.Status.ConfigStatus)
-				}
+			// return error if status is invalid
+			if failIfInvalid && config.Status.ConfigStatus == StatusInvalid {
+				return fmt.Errorf("error creating NodeConfig - node %s reported state as %s", config.Name, config.Status.ConfigStatus)
 			}
 			time.Sleep(defaultCooldownTime)
 		}
 	}
+}
+
+func (nc *Config) handleContextDone(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig,
+	logger logr.Logger, invalidate bool, invalidationTimeout time.Duration) error {
+	// contex cancelled means that node was removed
+	// don't report error here
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil
+	}
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && invalidate {
+		if err := nc.handleContextDeadline(ctx, c, invalidationTimeout, config, logger); err != nil {
+			return fmt.Errorf("error while handling config invalidation: %w", err)
+		}
+		return fmt.Errorf("context timeout: %w", ctx.Err())
+	}
+	// return error if there was different error than cancel
+	return fmt.Errorf("context error: %w", ctx.Err())
+}
+
+func (nc *Config) apiUpdate(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig) error {
+	nc.mtx.Lock()
+	defer nc.mtx.Unlock()
+	if err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config); err != nil {
+		return fmt.Errorf("error getting config %s from APi server: %w", config.Name, err)
+	}
+	return nil
+}
+
+// old context exceeded deadline so new config is created from the parent
+// nolint: contextcheck
+func (nc *Config) handleContextDeadline(ctx context.Context, c client.Client, invalidationTimeout time.Duration, config *v1alpha1.NodeConfig, logger logr.Logger) error {
+	pCtx, ok := ctx.Value(ParentCtx).(context.Context)
+	if !ok {
+		return fmt.Errorf("error getting parent context")
+	}
+	statusCtx, statusCancel := context.WithTimeout(pCtx, invalidationTimeout)
+	defer statusCancel()
+
+	if err := nc.updateStatus(statusCtx, c, config, StatusInvalid); err != nil {
+		return fmt.Errorf("error setting config %s status %s: %w", config.GetName(), StatusInvalid, err)
+	}
+
+	if err := nc.waitForConfig(statusCtx, c, config, StatusInvalid, false, logger, false, invalidationTimeout); err != nil {
+		return fmt.Errorf("error waiting for config %s status %s: %w", config.GetName(), StatusInvalid, err)
+	}
+	return nil
 }
 
 func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string) error {

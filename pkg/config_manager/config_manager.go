@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -11,9 +13,9 @@ import (
 	configmap "github.com/telekom/das-schiff-network-operator/pkg/config_map"
 	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
+	"golang.org/x/sync/semaphore"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -31,10 +33,15 @@ type ConfigManager struct {
 	deletedNodes chan []string
 	logger       logr.Logger
 	timeout      time.Duration
+	sem          semaphore.Weighted
 }
 
 func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeReconciler, log logr.Logger,
-	timeout time.Duration, changes chan bool, deleteNodes chan []string) *ConfigManager {
+	timeout time.Duration, limit int64, changes chan bool, deleteNodes chan []string) *ConfigManager {
+	// disable gradual rolllout if limit is < 1
+	if limit < 1 {
+		limit = math.MaxInt64
+	}
 	return &ConfigManager{
 		client:       c,
 		configs:      configmap.New(),
@@ -44,6 +51,7 @@ func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeRe
 		changes:      changes,
 		deletedNodes: deleteNodes,
 		timeout:      timeout,
+		sem:          *semaphore.NewWeighted(limit),
 	}
 }
 
@@ -95,7 +103,6 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 			}
 			err = cm.DeployConfigs(ctx)
 			if err != nil {
-				cm.logger.Error(err, "error deploying configs")
 				if err := cm.RestoreBackup(ctx); err != nil {
 					cm.logger.Error(err, "error restoring backup")
 				}
@@ -124,7 +131,6 @@ func (cm *ConfigManager) UpdateConfigs() error {
 		}
 		cm.logger.Info("set up config for node", "name", name)
 	}
-	cm.logger.Info("configs updated")
 	return nil
 }
 
@@ -141,24 +147,93 @@ func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Confi
 		return fmt.Errorf("error setting process status: %w", err)
 	}
 
+	deploymentCtx, deploymentCancel := context.WithCancel(ctx)
+	defer deploymentCancel()
+
+	wg := &sync.WaitGroup{}
+	errCh := make(chan error, len(configs))
 	for _, cfg := range configs {
-		cm.logger.Info("processing config", "name", cfg.GetName())
-		if cfg.GetActive() {
-			cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
-			cfg.SetCancelFunc(cfgCancel)
-			if err := cfg.Deploy(cfgContext, cm.client, cm.logger, cm.timeout); err != nil {
-				if err := cfg.CrateInvalid(ctx, cm.client); err != nil {
-					return fmt.Errorf("error creating invalid config object: %w", err)
-				}
-				return fmt.Errorf("error deploying config %s: %w", cfg.GetName(), err)
+		wg.Add(1)
+		go func(config *nodeconfig.Config) {
+			defer wg.Done()
+
+			if err := cm.sem.Acquire(ctx, 1); err != nil {
+				errCh <- fmt.Errorf("error acquring semaphore: %w", err)
+				return
 			}
-		}
+			defer cm.sem.Release(1)
+
+			select {
+			case <-deploymentCtx.Done():
+				errCh <- deploymentCtx.Err()
+				return
+			default:
+				err := cm.deployConfig(deploymentCtx, config)
+				if err != nil {
+					deploymentCancel()
+				}
+				errCh <- err
+				return
+			}
+		}(cfg)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	if err := cm.checkErrors(errCh); err != nil {
+		return fmt.Errorf("errors occurred: %w", err)
 	}
 
 	if err := cm.setProcessStatus(ctx, nodeconfig.StatusProvisioned); err != nil {
 		return fmt.Errorf("error setting process status: %w", err)
 	}
 
+	return nil
+}
+
+func (cm *ConfigManager) checkErrors(errCh chan error) error {
+	errCnt := 0
+	var firstErr error
+	for err := range errCh {
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			if !errors.Is(err, context.Canceled) {
+				cm.logger.Error(err, "depoyment error")
+			}
+			errCnt++
+		}
+	}
+
+	if errCnt > 0 {
+		return fmt.Errorf("%d error(s) occurred while processing configs, please check the logs for details: first known error: %w", errCnt, firstErr)
+	}
+
+	return nil
+}
+
+// nolint: contextcheck
+func (cm *ConfigManager) deployConfig(ctx context.Context, cfg *nodeconfig.Config) error {
+	if cfg.GetActive() {
+		cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
+		cfgContext = context.WithValue(cfgContext, nodeconfig.ParentCtx, ctx)
+		cfg.SetCancelFunc(cfgCancel)
+
+		cm.logger.Info("processing config", "name", cfg.GetName())
+		if err := cfg.Deploy(cfgContext, cm.client, cm.logger, cm.timeout); err != nil {
+			// we invalidate config on new, separate context, so invalidadion won't get cancelled
+			// if node update limit is set to more than 1.
+			invalidationCtx, invalidationCancel := context.WithTimeout(context.Background(), cm.timeout)
+			defer invalidationCancel()
+			if err := cfg.CrateInvalid(invalidationCtx, cm.client); err != nil {
+				return fmt.Errorf("error creating invalid config object: %w", err)
+			}
+			return fmt.Errorf("error deploying config %s: %w", cfg.GetName(), err)
+		}
+		cm.logger.Info("deployed", "name", cfg.GetName())
+	}
 	return nil
 }
 
@@ -188,7 +263,6 @@ func (cm *ConfigManager) validateConfigs(configs []*nodeconfig.Config) error {
 }
 
 func (cm *ConfigManager) setProcessStatus(ctx context.Context, status string) error {
-	cm.logger.Info("setting process status", "status", status)
 	process, err := cm.getProcess(ctx)
 	if err != nil && apierrors.IsNotFound(err) {
 		process.Spec.State = status
@@ -249,7 +323,7 @@ func (cm *ConfigManager) getProcess(ctx context.Context) (*v1alpha1.NodeConfigPr
 	return process, nil
 }
 
-// DirtyStartup will load all previous depoyed NodeConfigs into current leader
+// DirtyStartup will load all previously deployed NodeConfigs into current leader
 func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 	process, err := cm.getProcess(ctx)
 	if err != nil {
@@ -263,7 +337,7 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 	cm.logger.Info("previous leader left cluster in state", "state", process.Spec.State)
 	cm.logger.Info("using data left by previous leader...")
 
-	// get all known backup data and deploy it
+	// get all known backup data and load it into config manager memory
 	nodes, err := reconciler.ListNodes(ctx, cm.client)
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
@@ -297,11 +371,10 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 			cfg.SetDeployed(true)
 		}
 		cm.configs.Add(name, cfg)
-		cm.logger.Info("adding config", "node", name)
 	}
 
+	// prevouos leader left cluster in provisioning state - restore known backups
 	if process.Spec.State == nodeconfig.StatusProvisioning {
-		// prevouos leader left cluster in provisioning state - cleanup
 		if err := cm.RestoreBackup(ctx); err != nil {
 			return fmt.Errorf("error restoring backup: %w", err)
 		}

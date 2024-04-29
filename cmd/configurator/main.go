@@ -88,7 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _, err = setupReconcilers(mgr, timeout)
+	_, _, err = setupReconcilers(mgr, timeout, limit)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
@@ -101,7 +101,7 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
 	timoutVal, err := time.ParseDuration(timeout)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
@@ -120,7 +120,7 @@ func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigRe
 		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
-	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, cmInfo, nodeDelInfo)
+	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, limit, cmInfo, nodeDelInfo)
 
 	if err := mgr.Add(newOnLeaderElectionEvent(cm)); err != nil {
 		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
