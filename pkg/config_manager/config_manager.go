@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,11 +75,6 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 				if cancel != nil {
 					cancel()
 				}
-				err := config.Prune(ctx, cm.client)
-				if err != nil {
-					cm.logger.Error(err, "error deleting node configuration objects")
-				}
-				cm.logger.Info("removed node data", "name", n)
 			}
 		default:
 			time.Sleep(defaultCooldownTime)
@@ -129,7 +125,6 @@ func (cm *ConfigManager) UpdateConfigs() error {
 			cfg.UpdateNext(next)
 			cm.configs.Add(name, cfg)
 		}
-		cm.logger.Info("set up config for node", "name", name)
 	}
 	return nil
 }
@@ -245,13 +240,7 @@ func (cm *ConfigManager) validateConfigs(configs []*nodeconfig.Config) error {
 		}
 
 		next := cfg.GetNext()
-		if next != nil {
-			cm.logger.Info("next config", "config", *next)
-		}
 		invalid := cfg.GetInvalid()
-		if invalid != nil {
-			cm.logger.Info("invalid config", "config", *invalid)
-		}
 
 		if invalid != nil && next != nil {
 			if next.IsEqual(invalid) {
@@ -348,29 +337,36 @@ func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
 		return fmt.Errorf("error listing NodeConfigs: %w", err)
 	}
 
-	for name := range nodes {
+	// find configs by owner references
+	// TODO: can this be simplified?
+	for _, node := range nodes {
 		var current *v1alpha1.NodeConfig
 		var backup *v1alpha1.NodeConfig
 		var invalid *v1alpha1.NodeConfig
-		for j := range knownConfigs.Items {
-			if knownConfigs.Items[j].Name == name {
-				cm.logger.Info("found current config", "node", name)
-				current = &knownConfigs.Items[j]
-			}
-			if knownConfigs.Items[j].Name == name+nodeconfig.BackupSuffix {
-				cm.logger.Info("found backup config", "node", name)
-				backup = &knownConfigs.Items[j]
-			}
-			if knownConfigs.Items[j].Name == name+nodeconfig.InvalidSuffix {
-				cm.logger.Info("found invalid config", "node", name)
-				invalid = &knownConfigs.Items[j]
+		for i := range knownConfigs.Items {
+			for j := range knownConfigs.Items[i].OwnerReferences {
+				if knownConfigs.Items[i].OwnerReferences[j].UID == node.UID {
+					if knownConfigs.Items[i].Name == node.Name {
+						cm.logger.Info("found current config", "node", node.Name)
+						current = &knownConfigs.Items[i]
+					}
+					if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.InvalidSuffix) {
+						cm.logger.Info("found invalid config", "node", node.Name)
+						invalid = &knownConfigs.Items[i]
+					}
+					if strings.Contains(knownConfigs.Items[i].Name, nodeconfig.BackupSuffix) {
+						cm.logger.Info("found backup config", "node", node.Name)
+						backup = &knownConfigs.Items[i]
+					}
+				}
 			}
 		}
-		cfg := nodeconfig.New(name, current, backup, invalid)
+
+		cfg := nodeconfig.New(node.Name, current, backup, invalid)
 		if backup != nil {
 			cfg.SetDeployed(true)
 		}
-		cm.configs.Add(name, cfg)
+		cm.configs.Add(node.Name, cfg)
 	}
 
 	// prevouos leader left cluster in provisioning state - restore known backups
