@@ -82,11 +82,11 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/manager/main.go
 
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
+docker-build: ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
 .PHONY: docker-build-sidecar
-docker-build-sidecar: test ## Build docker image with the manager.
+docker-build-sidecar: ## Build docker image with the manager.
 	docker build -t ${SIDECAR_IMG} -f frr-exporter.Dockerfile .
 
 .PHONY: docker-build-configurator
@@ -129,7 +129,7 @@ install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~
 	$(KUSTOMIZE) build config/crd | kubectl apply -f -
 
 .PHONY: install-certs
-install-certs: manifests kustomize ## Install certs
+install-certs: manifests kustomize ## Install certs	
 	$(KUSTOMIZE) build config/certmanager | kubectl apply -f -
 
 .PHONY: uninstall

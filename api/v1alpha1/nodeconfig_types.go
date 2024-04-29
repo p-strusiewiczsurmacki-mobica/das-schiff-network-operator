@@ -82,6 +82,8 @@ func CopyNodeConfig(src, dst *NodeConfig, name string) {
 	copy(dst.Spec.Layer2, src.Spec.Layer2)
 	copy(dst.Spec.Vrf, src.Spec.Vrf)
 	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
+	dst.OwnerReferences = make([]metav1.OwnerReference, len(src.OwnerReferences))
+	copy(dst.OwnerReferences, src.OwnerReferences)
 	dst.Name = name
 }
 

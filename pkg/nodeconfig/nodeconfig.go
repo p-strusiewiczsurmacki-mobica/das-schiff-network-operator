@@ -127,31 +127,15 @@ func NewEmpty(name string) *Config {
 }
 
 func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger, invalidationTimeout time.Duration) error {
-	nc.mtx.Lock()
-
-	if nc.next == nil {
-		nc.next = v1alpha1.NewEmptyConfig(nc.name)
+	skip, err := nc.createAPIObjects(ctx, c, logger)
+	if err != nil {
+		return fmt.Errorf("error creating API objects: %w", err)
 	}
 
-	if !nc.active.Load() {
+	// either node was deleted or new config equals current config - skip
+	if skip {
 		return nil
 	}
-
-	if nc.current == nil {
-		nc.current = v1alpha1.NewEmptyConfig(nc.name)
-	}
-
-	if err := createOrUpdate(ctx, c, nc.current, nc.next, logger); err != nil {
-		return fmt.Errorf("error configuring node config object: %w", err)
-	}
-
-	nc.deployed.Store(true)
-
-	if err := nc.CreateBackup(ctx, c); err != nil {
-		return fmt.Errorf("error creating backup config: %w", err)
-	}
-
-	nc.mtx.Unlock()
 
 	if err := nc.waitForConfig(ctx, c, nc.current, statusEmpty, false, logger, false, invalidationTimeout); err != nil {
 		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, statusEmpty, err)
@@ -172,29 +156,63 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 	return nil
 }
 
-func createOrUpdate(ctx context.Context, c client.Client, current, next *v1alpha1.NodeConfig, logger logr.Logger) error {
+func (nc *Config) createAPIObjects(ctx context.Context, c client.Client, logger logr.Logger) (bool, error) {
+	nc.mtx.Lock()
+	defer nc.mtx.Unlock()
+
+	if nc.next == nil {
+		nc.next = v1alpha1.NewEmptyConfig(nc.name)
+	}
+
+	if !nc.active.Load() {
+		return true, nil
+	}
+
+	if nc.current == nil {
+		nc.current = v1alpha1.NewEmptyConfig(nc.name)
+	}
+
+	skip, err := createOrUpdate(ctx, c, nc.current, nc.next, logger)
+	if err != nil {
+		return false, fmt.Errorf("error configuring node config object: %w", err)
+	}
+
+	if skip {
+		return true, nil
+	}
+
+	nc.deployed.Store(true)
+
+	if err := nc.CreateBackup(ctx, c); err != nil {
+		return false, fmt.Errorf("error creating backup config: %w", err)
+	}
+
+	return false, nil
+}
+
+func createOrUpdate(ctx context.Context, c client.Client, current, next *v1alpha1.NodeConfig, logger logr.Logger) (bool, error) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil && apierrors.IsNotFound(err) {
 		v1alpha1.CopyNodeConfig(next, current, current.Name)
 		// config does not exist - create
 		if err := c.Create(ctx, current); err != nil {
-			return fmt.Errorf("error creating NodeConfig object: %w", err)
+			return false, fmt.Errorf("error creating NodeConfig object: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("error getting current config: %w", err)
+		return false, fmt.Errorf("error getting current config: %w", err)
 	} else {
 		// config already exists - update
 		// check if new config is equal to existing config
 		// if so, skip the update as nothing has to be updated
 		if next.IsEqual(current) {
 			logger.Info("new config is equal to current config, skipping...", "config", current.Name)
-			return nil
+			return true, nil
 		}
 		v1alpha1.CopyNodeConfig(next, current, current.Name)
 		if err := updateConfig(ctx, c, current); err != nil {
-			return fmt.Errorf("error updating NodeConfig object: %w", err)
+			return false, fmt.Errorf("error updating NodeConfig object: %w", err)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (nc *Config) SetBackupAsNext() bool {
@@ -305,8 +323,8 @@ func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1
 			if err := nc.apiUpdate(ctx, c, config); err != nil {
 				return fmt.Errorf("error updating API boject: %w", err)
 			}
-			// Accept any status ("") or expected status
-			if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus {
+			// return no error if accepting any status (""), expected status, or if node was deleted
+			if expectedStatus == "" || config.Status.ConfigStatus == expectedStatus || !nc.active.Load() {
 				return nil
 			}
 
@@ -341,6 +359,10 @@ func (nc *Config) apiUpdate(ctx context.Context, c client.Client, config *v1alph
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
 	if err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config); err != nil {
+		if apierrors.IsNotFound(err) {
+			// discard eror - node was deleted
+			return nil
+		}
 		return fmt.Errorf("error getting config %s from APi server: %w", config.Name, err)
 	}
 	return nil
