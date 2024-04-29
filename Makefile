@@ -82,15 +82,15 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/manager/main.go
 
 .PHONY: docker-build
-docker-build: ## Build docker image with the manager.
+docker-build: test ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
 .PHONY: docker-build-sidecar
-docker-build-sidecar: ## Build docker image with the manager.
+docker-build-sidecar: test ## Build docker image with the manager.
 	docker build -t ${SIDECAR_IMG} -f frr-exporter.Dockerfile .
 
 .PHONY: docker-build-configurator
-docker-build-configurator: ## Build docker image with the manager.
+docker-build-configurator: test ## Build docker image with the manager.
 	docker build -t ${CONFIGURATOR_IMG} -f configurator.Dockerfile .
 
 .PHONY: docker-push
