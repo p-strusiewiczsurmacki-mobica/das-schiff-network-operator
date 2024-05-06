@@ -53,7 +53,7 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 }
 
 func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
-	added, deleted, err := nr.Update(ctx)
+	added, deleted, err := nr.update(ctx)
 	if err != nil {
 		return fmt.Errorf("error updating node reconciler data: %w", err)
 	}
@@ -73,14 +73,14 @@ func (nr *NodeReconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (nr *NodeReconciler) Update(ctx context.Context) (added, deleted []string, err error) {
+func (nr *NodeReconciler) update(ctx context.Context) (added, deleted []string, err error) {
 	nr.Mutex.Lock()
 	defer nr.Mutex.Unlock()
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, nr.timeout)
 	defer cancel()
 
-	currentNodes, err := nr.listNodes(timeoutCtx)
+	currentNodes, err := ListNodes(timeoutCtx, nr.client)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error listing nodes: %w", err)
 	}
@@ -90,10 +90,6 @@ func (nr *NodeReconciler) Update(ctx context.Context) (added, deleted []string, 
 	nr.nodes = currentNodes
 
 	return added, deleted, nil
-}
-
-func (nr *NodeReconciler) listNodes(ctx context.Context) (map[string]*corev1.Node, error) {
-	return ListNodes(ctx, nr.client)
 }
 
 func ListNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {
