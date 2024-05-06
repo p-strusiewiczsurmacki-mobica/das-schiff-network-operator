@@ -23,7 +23,7 @@ const (
 	DefaultNodeUpdateLimit = 1
 )
 
-type IConfigReconciler interface {
+type ConfigReconcilerInterface interface {
 	CreateConfigForNode(string, *corev1.Node) (*v1alpha1.NodeConfig, error)
 }
 

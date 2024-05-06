@@ -29,8 +29,8 @@ const (
 type ConfigManager struct {
 	client       client.Client
 	configsMap   *configmap.ConfigMap
-	cr           reconciler.IConfigReconciler
-	nr           reconciler.INodeReconciler
+	cr           reconciler.ConfigReconcilerInterface
+	nr           reconciler.NodeReconcilerInterface
 	changes      chan bool
 	deletedNodes chan []string
 	logger       logr.Logger
@@ -38,7 +38,7 @@ type ConfigManager struct {
 	sem          semaphore.Weighted
 }
 
-func New(c client.Client, cr reconciler.IConfigReconciler, nr reconciler.INodeReconciler, log logr.Logger,
+func New(c client.Client, cr reconciler.ConfigReconcilerInterface, nr reconciler.NodeReconcilerInterface, log logr.Logger,
 	timeout time.Duration, limit int64, changes chan bool, deleteNodes chan []string) *ConfigManager {
 	// disable gradual rolllout if limit is < 1
 	if limit < 1 {

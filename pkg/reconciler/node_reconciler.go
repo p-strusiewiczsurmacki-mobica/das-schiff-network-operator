@@ -17,7 +17,7 @@ const (
 	nodeDebauncerTime = time.Second * 5
 )
 
-type INodeReconciler interface {
+type NodeReconcilerInterface interface {
 	GetNodes() map[string]*corev1.Node
 }
 
