@@ -77,6 +77,7 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 
 				if config == nil {
 					cm.logger.Info("no in-memory config found", "node", n)
+					continue
 				}
 
 				cm.configsMap.Delete(n)
