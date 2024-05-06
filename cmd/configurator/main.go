@@ -158,14 +158,6 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
-	if err = (&controllers.EventReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: cr,
-	}).SetupWithManager(mgr, nr.Events); err != nil {
-		return nil, nil, fmt.Errorf("unable to create Event controller: %w", err)
-	}
-
 	return cr, nr, nil
 }
 

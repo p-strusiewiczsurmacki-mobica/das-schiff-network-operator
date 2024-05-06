@@ -10,7 +10,6 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/debounce"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 const (
@@ -25,7 +24,6 @@ type NodeReconciler struct {
 	debouncer *debounce.Debouncer
 	nodes     map[string]*corev1.Node
 	Mutex     sync.RWMutex
-	Events    chan event.GenericEvent
 	timeout   time.Duration
 
 	NodeReconcilerReady chan bool
@@ -44,7 +42,6 @@ func NewNodeReconciler(clusterClient client.Client, logger logr.Logger, timeout 
 		client:              clusterClient,
 		logger:              logger,
 		nodes:               make(map[string]*corev1.Node),
-		Events:              make(chan event.GenericEvent),
 		timeout:             timeout,
 		configManagerInform: cmInfo,
 		deleteNodeInform:    nodeDelInfo,
