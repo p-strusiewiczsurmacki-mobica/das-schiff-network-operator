@@ -57,6 +57,7 @@ func New(c client.Client, cr reconciler.ConfigReconcilerInterface, nr reconciler
 	}
 }
 
+// WatchConfigs waits for cm.deletedNodes channel.
 func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error) {
 	cm.logger.Info("starting watching for deleted nodes...")
 	for {
@@ -93,6 +94,7 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 	}
 }
 
+// WatchConfigs waits for cm.changes channel.
 func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 	cm.logger.Info("starting watching for changes...")
 	for {
@@ -104,13 +106,13 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 			errCh <- nil
 		case <-cm.changes:
 			cm.logger.Info("got notification about changes")
-			err := cm.UpdateConfigs()
+			err := cm.updateConfigs()
 			if err != nil {
 				errCh <- fmt.Errorf("error updating configs: %w", err)
 			}
-			err = cm.DeployConfigs(ctx)
+			err = cm.deployConfigs(ctx)
 			if err != nil {
-				if err := cm.RestoreBackup(ctx); err != nil {
+				if err := cm.restoreBackup(ctx); err != nil {
 					cm.logger.Error(err, "error restoring backup")
 				}
 			}
@@ -120,7 +122,35 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 	}
 }
 
-func (cm *ConfigManager) UpdateConfigs() error {
+// DirtyStartup will load all previously deployed NodeConfigs into current leader.
+func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
+	process, err := cm.getProcess(ctx)
+	if err != nil {
+		// process object does not exists - there was no operator running on this cluster before
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("error getting process object: %w", err)
+	}
+
+	cm.logger.Info("previous leader left cluster in state", "state", process.Spec.State)
+	cm.logger.Info("using data left by previous leader...")
+
+	// get all known backup data and load it into config manager memory
+	if err := cm.loadConfigs(ctx); err != nil {
+		return fmt.Errorf("error loading configs: %w", err)
+	}
+
+	// prevouos leader left cluster in provisioning state - restore known backups
+	if process.Spec.State == nodeconfig.StatusProvisioning {
+		if err := cm.restoreBackup(ctx); err != nil {
+			return fmt.Errorf("error restoring backup: %w", err)
+		}
+	}
+	return nil
+}
+
+func (cm *ConfigManager) updateConfigs() error {
 	cm.logger.Info("updating configs...")
 	currentNodes := cm.nr.GetNodes()
 	for name := range currentNodes {
@@ -144,7 +174,7 @@ func (cm *ConfigManager) UpdateConfigs() error {
 	return nil
 }
 
-func (cm *ConfigManager) Deploy(ctx context.Context, configs []*nodeconfig.Config) error {
+func (cm *ConfigManager) deploy(ctx context.Context, configs []*nodeconfig.Config) error {
 	for _, cfg := range configs {
 		cfg.SetDeployed(false)
 	}
@@ -284,21 +314,21 @@ func (cm *ConfigManager) setProcessStatus(ctx context.Context, status string) er
 	return nil
 }
 
-func (cm *ConfigManager) DeployConfigs(ctx context.Context) error {
+func (cm *ConfigManager) deployConfigs(ctx context.Context) error {
 	cm.logger.Info("deploying configs ...")
 	toDeploy, err := cm.configsMap.GetSlice()
 	if err != nil {
 		return fmt.Errorf("error converting config map to slice: %w", err)
 	}
 
-	if err := cm.Deploy(ctx, toDeploy); err != nil {
+	if err := cm.deploy(ctx, toDeploy); err != nil {
 		return fmt.Errorf("error deploying configs: %w", err)
 	}
 
 	return nil
 }
 
-func (cm *ConfigManager) RestoreBackup(ctx context.Context) error {
+func (cm *ConfigManager) restoreBackup(ctx context.Context) error {
 	cm.logger.Info("restoring backup...")
 	slice, err := cm.configsMap.GetSlice()
 	if err != nil {
@@ -313,7 +343,7 @@ func (cm *ConfigManager) RestoreBackup(ctx context.Context) error {
 		}
 	}
 
-	if err := cm.Deploy(ctx, toDeploy); err != nil {
+	if err := cm.deploy(ctx, toDeploy); err != nil {
 		return fmt.Errorf("error deploying configs: %w", err)
 	}
 
@@ -331,34 +361,6 @@ func (cm *ConfigManager) getProcess(ctx context.Context) (*v1alpha1.NodeConfigPr
 		return process, fmt.Errorf("error getting process object: %w", err)
 	}
 	return process, nil
-}
-
-// DirtyStartup will load all previously deployed NodeConfigs into current leader.
-func (cm *ConfigManager) DirtyStartup(ctx context.Context) error {
-	process, err := cm.getProcess(ctx)
-	if err != nil {
-		// process object does not exists - there was no operator running on this cluster before
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("error getting process object: %w", err)
-	}
-
-	cm.logger.Info("previous leader left cluster in state", "state", process.Spec.State)
-	cm.logger.Info("using data left by previous leader...")
-
-	// get all known backup data and load it into config manager memory
-	if err := cm.loadConfigs(ctx); err != nil {
-		return fmt.Errorf("error loading configs: %w", err)
-	}
-
-	// prevouos leader left cluster in provisioning state - restore known backups
-	if process.Spec.State == nodeconfig.StatusProvisioning {
-		if err := cm.RestoreBackup(ctx); err != nil {
-			return fmt.Errorf("error restoring backup: %w", err)
-		}
-	}
-	return nil
 }
 
 func (cm *ConfigManager) loadConfigs(ctx context.Context) error {
