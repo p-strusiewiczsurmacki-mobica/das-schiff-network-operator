@@ -1,49 +1,53 @@
 package configmap
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
 )
 
 type ConfigMap struct {
-	configs map[string]*nodeconfig.Config
-	mtx     sync.RWMutex
+	sync.Map
 }
 
-func New() *ConfigMap {
-	return &ConfigMap{
-		configs: make(map[string]*nodeconfig.Config),
+func (cm *ConfigMap) Get(name string) (*nodeconfig.Config, error) {
+	cfg, ok := cm.Load(name)
+	if !ok {
+		return nil, nil
 	}
-}
-
-func (cm *ConfigMap) Add(name string, config *nodeconfig.Config) {
-	cm.mtx.Lock()
-	defer cm.mtx.Unlock()
-	cm.configs[name] = config
-}
-
-func (cm *ConfigMap) Remove(name string) {
-	cm.mtx.Lock()
-	defer cm.mtx.Unlock()
-	delete(cm.configs, name)
-}
-
-func (cm *ConfigMap) Get(name string) *nodeconfig.Config {
-	cm.mtx.RLock()
-	defer cm.mtx.RUnlock()
-	if cfg, exist := cm.configs[name]; exist {
-		return cfg
+	config, ok := cfg.(*nodeconfig.Config)
+	if !ok {
+		return nil, fmt.Errorf("error converting config for node %s from interface", name)
 	}
-	return nil
+	return config, nil
 }
 
-func (cm *ConfigMap) GetSlice() []*nodeconfig.Config {
-	cm.mtx.RLock()
-	defer cm.mtx.RUnlock()
+func (cm *ConfigMap) GetSlice() ([]*nodeconfig.Config, error) {
 	slice := []*nodeconfig.Config{}
-	for _, config := range cm.configs {
+	var err error
+	cm.Range(func(key any, value any) bool {
+		name, ok := key.(string)
+		if !ok {
+			err = fmt.Errorf("error converting key %v to string", key)
+			return false
+		}
+
+		if value == nil {
+			slice = append(slice, nil)
+			return true
+		}
+
+		config, ok := value.(*nodeconfig.Config)
+		if !ok {
+			err = fmt.Errorf("error converting config %s from interface", name)
+			return false
+		}
 		slice = append(slice, config)
+		return true
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error converting config map to slice: %w", err)
 	}
-	return slice
+	return slice, nil
 }

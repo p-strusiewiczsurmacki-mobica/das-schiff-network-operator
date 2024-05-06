@@ -28,7 +28,7 @@ const (
 
 type ConfigManager struct {
 	client       client.Client
-	configs      *configmap.ConfigMap
+	configsMap   *configmap.ConfigMap
 	cr           *reconciler.ConfigReconciler
 	nr           *reconciler.NodeReconciler
 	changes      chan bool
@@ -46,7 +46,7 @@ func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeRe
 	}
 	return &ConfigManager{
 		client:       c,
-		configs:      configmap.New(),
+		configsMap:   &configmap.ConfigMap{},
 		cr:           cr,
 		nr:           nr,
 		logger:       log,
@@ -58,7 +58,7 @@ func New(c client.Client, cr *reconciler.ConfigReconciler, nr *reconciler.NodeRe
 }
 
 func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error) {
-	cm.logger.Info("starting watching for delete nodes...")
+	cm.logger.Info("starting watching for deleted nodes...")
 	for {
 		select {
 		case <-ctx.Done():
@@ -69,8 +69,17 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 		case nodes := <-cm.deletedNodes:
 			cm.logger.Info("nodes deleted", "nodes", nodes)
 			for _, n := range nodes {
-				config := cm.configs.Get(n)
-				cm.configs.Remove(n)
+				config, err := cm.configsMap.Get(n)
+				if err != nil {
+					cm.logger.Error(err, "error getting config", "node", n)
+					continue
+				}
+
+				if config == nil {
+					cm.logger.Info("no in-memory config found", "node", n)
+				}
+
+				cm.configsMap.Delete(n)
 				config.SetActive(false)
 				cancel := config.GetCancelFunc()
 				if cancel != nil {
@@ -119,12 +128,16 @@ func (cm *ConfigManager) UpdateConfigs() error {
 		if err != nil {
 			return fmt.Errorf("error creating config for the node %s: %w", name, err)
 		}
-		if cfg := cm.configs.Get(name); cfg != nil {
+		cfg, err := cm.configsMap.Get(name)
+		if err != nil {
+			return fmt.Errorf("error getting config for node %s: %w", name, err)
+		}
+		if cfg != nil {
 			cfg.UpdateNext(next)
 		} else {
 			cfg = nodeconfig.NewEmpty(name)
 			cfg.UpdateNext(next)
-			cm.configs.Add(name, cfg)
+			cm.configsMap.Store(name, cfg)
 		}
 	}
 	return nil
@@ -272,7 +285,10 @@ func (cm *ConfigManager) setProcessStatus(ctx context.Context, status string) er
 
 func (cm *ConfigManager) DeployConfigs(ctx context.Context) error {
 	cm.logger.Info("deploying configs ...")
-	toDeploy := cm.configs.GetSlice()
+	toDeploy, err := cm.configsMap.GetSlice()
+	if err != nil {
+		return fmt.Errorf("error converting config map to slice: %w", err)
+	}
 
 	if err := cm.Deploy(ctx, toDeploy); err != nil {
 		return fmt.Errorf("error deploying configs: %w", err)
@@ -283,7 +299,10 @@ func (cm *ConfigManager) DeployConfigs(ctx context.Context) error {
 
 func (cm *ConfigManager) RestoreBackup(ctx context.Context) error {
 	cm.logger.Info("restoring backup...")
-	slice := cm.configs.GetSlice()
+	slice, err := cm.configsMap.GetSlice()
+	if err != nil {
+		return fmt.Errorf("error converting config map to slice: %w", err)
+	}
 	toDeploy := []*nodeconfig.Config{}
 	for _, cfg := range slice {
 		if cfg.GetDeployed() {
@@ -365,7 +384,7 @@ func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, 
 		if backup != nil {
 			cfg.SetDeployed(true)
 		}
-		cm.configs.Add(node.Name, cfg)
+		cm.configsMap.Store(node.Name, cfg)
 	}
 }
 
