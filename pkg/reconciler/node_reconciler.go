@@ -17,6 +17,10 @@ const (
 	nodeDebauncerTime = time.Second * 5
 )
 
+type INodeReconciler interface {
+	GetNodes() map[string]*corev1.Node
+}
+
 // NodeReconciler is responsible for watching node objects.
 type NodeReconciler struct {
 	client    client.Client

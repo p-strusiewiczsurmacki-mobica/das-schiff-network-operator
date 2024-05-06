@@ -23,6 +23,10 @@ const (
 	DefaultNodeUpdateLimit = 1
 )
 
+type IConfigReconciler interface {
+	CreateConfigForNode(string, *corev1.Node) (*v1alpha1.NodeConfig, error)
+}
+
 // ConfigReconciler is responsible for creating NodeConfig objects.
 type ConfigReconciler struct {
 	globalCfg *v1alpha1.NodeConfig
