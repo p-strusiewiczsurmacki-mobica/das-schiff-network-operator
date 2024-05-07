@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -24,7 +24,7 @@ func TestReconciler(t *testing.T) {
 
 var (
 	node = &corev1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "node",
 		},
 		Status: corev1.NodeStatus{
@@ -49,7 +49,7 @@ var _ = Describe("ConfigReconciler", func() {
 		})
 	})
 	Context("reconcileDebounced() should", func() {
-		It("return no error if fetched data succesfuly", func() {
+		It("return no error if fetched data successfully", func() {
 			c := createClient()
 			cmInfo := make(chan bool)
 			defer close(cmInfo)
@@ -78,12 +78,12 @@ var _ = Describe("ConfigReconciler", func() {
 			r.globalCfg = v1alpha1.NewEmptyConfig("global")
 			r.globalCfg.Spec.Layer2 = []v1alpha1.Layer2NetworkConfigurationSpec{
 				{
-					NodeSelector: &v1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+					NodeSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
 				},
 			}
 
 			cfg, err := r.CreateConfigForNode("node", &corev1.Node{
-				ObjectMeta: v1.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:   "node",
 					Labels: map[string]string{"app": "test"},
 				},

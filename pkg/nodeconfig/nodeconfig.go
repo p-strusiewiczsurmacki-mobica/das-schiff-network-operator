@@ -58,7 +58,6 @@ func (nc *Config) SetCancelFunc(f *context.CancelFunc) {
 
 func (nc *Config) GetCancelFunc() *context.CancelFunc {
 	return nc.cancelFunc.Load()
-
 }
 
 func (nc *Config) GetName() string {

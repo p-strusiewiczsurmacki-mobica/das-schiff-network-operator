@@ -137,18 +137,18 @@ var _ = Describe("NodeConfig", func() {
 		It("set and return active state", func() {
 			config := NewEmpty(testConfigName)
 			config.SetActive(true)
-			Expect(config.GetActive()).To(Equal(true))
+			Expect(config.GetActive()).To(BeTrue())
 			config.SetActive(false)
-			Expect(config.GetActive()).To(Equal(false))
+			Expect(config.GetActive()).To(BeFalse())
 		})
 	})
 	Context("SetDeployed()/GetDeployed() should", func() {
 		It("set and return deployed state", func() {
 			config := NewEmpty(testConfigName)
 			config.SetDeployed(true)
-			Expect(config.GetDeployed()).To(Equal(true))
+			Expect(config.GetDeployed()).To(BeTrue())
 			config.SetDeployed(false)
-			Expect(config.GetDeployed()).To(Equal(false))
+			Expect(config.GetDeployed()).To(BeFalse())
 		})
 	})
 	Context("GetNext() should", func() {
