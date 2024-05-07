@@ -64,9 +64,11 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 		select {
 		case <-ctx.Done():
 			if !errors.Is(ctx.Err(), context.Canceled) {
-				errCh <- fmt.Errorf("error watching deleted nodes: %w", ctx.Err())
+				errCh <- fmt.Errorf("error watching configs: %w", ctx.Err())
+			} else {
+				errCh <- nil
 			}
-			errCh <- nil
+			return
 		case nodes := <-cm.deletedNodes:
 			cm.logger.Info("nodes deleted", "nodes", nodes)
 			for _, n := range nodes {
@@ -85,7 +87,7 @@ func (cm *ConfigManager) WatchDeletedNodes(ctx context.Context, errCh chan error
 				config.SetActive(false)
 				cancel := config.GetCancelFunc()
 				if cancel != nil {
-					cancel()
+					(*cancel)()
 				}
 			}
 		default:
@@ -102,13 +104,16 @@ func (cm *ConfigManager) WatchConfigs(ctx context.Context, errCh chan error) {
 		case <-ctx.Done():
 			if !errors.Is(ctx.Err(), context.Canceled) {
 				errCh <- fmt.Errorf("error watching configs: %w", ctx.Err())
+			} else {
+				errCh <- nil
 			}
-			errCh <- nil
+			return
 		case <-cm.changes:
 			cm.logger.Info("got notification about changes")
 			err := cm.updateConfigs()
 			if err != nil {
 				errCh <- fmt.Errorf("error updating configs: %w", err)
+				return
 			}
 			err = cm.deployConfigs(ctx)
 			if err != nil {
@@ -259,7 +264,7 @@ func (cm *ConfigManager) deployConfig(ctx context.Context, cfg *nodeconfig.Confi
 	if cfg.GetActive() {
 		cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
 		cfgContext = context.WithValue(cfgContext, nodeconfig.ParentCtx, ctx)
-		cfg.SetCancelFunc(cfgCancel)
+		cfg.SetCancelFunc(&cfgCancel)
 
 		cm.logger.Info("processing config", "name", cfg.GetName())
 		if err := cfg.Deploy(cfgContext, cm.client, cm.logger, cm.timeout); err != nil {

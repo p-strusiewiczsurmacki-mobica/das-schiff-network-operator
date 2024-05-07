@@ -214,7 +214,10 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 
 	select {
 	case <-leCtx.Done():
-		return fmt.Errorf("onLeaderElection context error: %w", leCtx.Err())
+		if err := leCtx.Err(); err != nil {
+			return fmt.Errorf("onLeaderElection context error: %w", leCtx.Err())
+		}
+		return nil
 	case err := <-watchNodesErr:
 		return fmt.Errorf("node watcher error: %w", err)
 	case err := <-watchConfigsErr:

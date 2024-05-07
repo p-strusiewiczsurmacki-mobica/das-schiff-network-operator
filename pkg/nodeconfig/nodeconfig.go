@@ -52,16 +52,13 @@ func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
 	return nc
 }
 
-func (nc *Config) SetCancelFunc(f context.CancelFunc) {
-	nc.cancelFunc.Store(&f)
+func (nc *Config) SetCancelFunc(f *context.CancelFunc) {
+	nc.cancelFunc.Store(f)
 }
 
-func (nc *Config) GetCancelFunc() context.CancelFunc {
-	f := nc.cancelFunc.Load()
-	if f != nil {
-		return *f
-	}
-	return nil
+func (nc *Config) GetCancelFunc() *context.CancelFunc {
+	return nc.cancelFunc.Load()
+
 }
 
 func (nc *Config) GetName() string {
@@ -150,7 +147,7 @@ func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logge
 	}
 
 	if err := nc.waitForConfig(ctx, c, nc.current, StatusProvisioned, true, logger, true, invalidationTimeout); err != nil {
-		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioning, err)
+		return fmt.Errorf("error waiting for config %s with status %s: %w", nc.name, StatusProvisioned, err)
 	}
 
 	return nil
