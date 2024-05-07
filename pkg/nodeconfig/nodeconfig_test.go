@@ -174,37 +174,37 @@ var _ = Describe("NodeConfig", func() {
 			config := NewEmpty(testConfigName)
 			ctx := context.TODO()
 			c := createClient(fakeNodeConfig)
-			err := config.Deploy(ctx, c, logr.New(nil), time.Second*30)
+			err := config.Deploy(ctx, c, logr.New(nil), time.Millisecond*200)
 			Expect(err).ToNot(HaveOccurred())
 		})
 		It("return error if context deadline was exceeded when deploying config", func() {
 			config := NewEmpty(testConfigName)
 			parent := context.Background()
-			ctx, cancel := context.WithTimeout(parent, time.Second*10)
+			ctx, cancel := context.WithTimeout(parent, time.Millisecond*200)
 			defer cancel()
 			childCtx := context.WithValue(ctx, ParentCtx, parent)
 
 			fakeNodeConfig.Items[0].Spec.RoutingTable = []v1alpha1.RoutingTableSpec{{TableID: 1}}
 			c := createClient(fakeNodeConfig)
 
-			err := config.Deploy(childCtx, c, logr.New(nil), time.Second*10)
+			err := config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*200)
 			Expect(err).To(HaveOccurred())
 		})
 		It("return error if context deadline was exceeded when invalidating config", func() {
 			config := NewEmpty(testConfigName)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*200)
 			defer cancel()
 			childCtx := context.WithValue(ctx, ParentCtx, ctx)
 			fakeNodeConfig.Items[0].Spec.RoutingTable = []v1alpha1.RoutingTableSpec{{TableID: 1}}
 			c := createClient(fakeNodeConfig)
 
-			err := config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*100)
+			err := config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*200)
 			Expect(err).To(HaveOccurred())
 		})
 		It("return no error if deployment was successful", func() {
 			config := NewEmpty(testConfigName)
 			config.active.Store(true)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*200)
 			defer cancel()
 			childCtx := context.WithValue(ctx, ParentCtx, ctx)
 			fakeNodeConfig.Items[0].Spec.RoutingTable = []v1alpha1.RoutingTableSpec{{TableID: 1}}
@@ -213,11 +213,11 @@ var _ = Describe("NodeConfig", func() {
 			quit := make(chan bool)
 			var deployErr error
 			go func() {
-				deployErr = config.Deploy(childCtx, c, logr.New(nil), time.Second)
+				deployErr = config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*200)
 				quit <- true
 			}()
 
-			time.Sleep(time.Millisecond * 200)
+			time.Sleep(time.Millisecond * 100)
 			err := config.updateStatus(ctx, c, config.current, StatusProvisioned)
 			Expect(err).ToNot(HaveOccurred())
 

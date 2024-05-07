@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -24,15 +23,20 @@ func TestReconciler(t *testing.T) {
 }
 
 var (
-	fakeNodesJSON = `{"items":[{"metadata":{"name":"node"}}]}`
-	fakeNodes     *corev1.NodeList
+	node = &corev1.Node{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "node",
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
 )
-
-var _ = BeforeSuite(func() {
-	fakeNodes = &corev1.NodeList{}
-	err := json.Unmarshal([]byte(fakeNodesJSON), fakeNodes)
-	Expect(err).ShouldNot(HaveOccurred())
-})
 
 var _ = Describe("ConfigReconciler", func() {
 	Context("NewConfigReconciler() should", func() {
@@ -92,66 +96,9 @@ var _ = Describe("ConfigReconciler", func() {
 })
 
 var _ = Describe("NodeReconciler", func() {
-	Context("reconcileDebounced() should", func() {
-		It("return no error and inform about new nodes added and deleted", func() {
-			n := &corev1.Node{
-				ObjectMeta: v1.ObjectMeta{
-					Name: "node",
-				},
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:   corev1.NodeReady,
-							Status: corev1.ConditionTrue,
-						},
-					},
-				},
-			}
-			c := createClient(n)
-			cmInfo := make(chan bool)
-			defer close(cmInfo)
-			nodeDelInfo := make(chan []string)
-			defer close(nodeDelInfo)
-
-			r, err := NewNodeReconciler(c, logr.New(nil), time.Second, cmInfo, nodeDelInfo)
-			Expect(r).ToNot(BeNil())
-			Expect(err).ToNot(HaveOccurred())
-
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			go func() {
-				err = r.reconcileDebounced(ctx)
-			}()
-			info := <-cmInfo
-			Expect(info).To(BeTrue())
-			Expect(err).ToNot(HaveOccurred())
-
-			err = c.Delete(context.Background(), n)
-			Expect(err).ToNot(HaveOccurred())
-
-			go func() {
-				err = r.reconcileDebounced(ctx)
-			}()
-			deleted := <-nodeDelInfo
-			Expect(deleted).To(HaveLen(1))
-		})
-	})
-	Context("GetNodes() should", func() {
-		It("return a map of currently known nodes", func() {
-			n := &corev1.Node{
-				ObjectMeta: v1.ObjectMeta{
-					Name: "node",
-				},
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:   corev1.NodeReady,
-							Status: corev1.ConditionTrue,
-						},
-					},
-				},
-			}
-			c := createClient(n)
+	Context("reconcileDebounced() and GetNodes() should", func() {
+		It("return no error and inform about added and deleted nodes, list known nodes", func() {
+			c := createClient(node)
 			cmInfo := make(chan bool)
 			defer close(cmInfo)
 			nodeDelInfo := make(chan []string)
@@ -172,6 +119,15 @@ var _ = Describe("NodeReconciler", func() {
 
 			nodes := r.GetNodes()
 			Expect(nodes).To(HaveLen(1))
+
+			err = c.Delete(context.Background(), node)
+			Expect(err).ToNot(HaveOccurred())
+
+			go func() {
+				err = r.reconcileDebounced(ctx)
+			}()
+			deleted := <-nodeDelInfo
+			Expect(deleted).To(HaveLen(1))
 		})
 	})
 })
