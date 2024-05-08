@@ -207,12 +207,17 @@ func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
 
 	watchNodesErr := make(chan error)
 	watchConfigsErr := make(chan error)
-	go e.cm.WatchDeletedNodes(ctx, watchNodesErr)
-	go e.cm.WatchConfigs(ctx, watchConfigsErr)
+	leCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go e.cm.WatchDeletedNodes(leCtx, watchNodesErr)
+	go e.cm.WatchConfigs(leCtx, watchConfigsErr)
 
 	select {
-	case <-ctx.Done():
-		return fmt.Errorf("onLeaderElection context error: %w", ctx.Err())
+	case <-leCtx.Done():
+		if err := leCtx.Err(); err != nil {
+			return fmt.Errorf("onLeaderElection context error: %w", leCtx.Err())
+		}
+		return nil
 	case err := <-watchNodesErr:
 		return fmt.Errorf("node watcher error: %w", err)
 	case err := <-watchConfigsErr:

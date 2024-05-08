@@ -17,6 +17,7 @@ const (
 	nodeDebauncerTime = time.Second * 5
 )
 
+//go:generate mockgen -destination ./mock/mock_node_reconciler.go . NodeReconcilerInterface
 type NodeReconcilerInterface interface {
 	GetNodes() map[string]*corev1.Node
 }

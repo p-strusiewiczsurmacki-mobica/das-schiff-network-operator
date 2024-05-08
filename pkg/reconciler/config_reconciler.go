@@ -23,6 +23,7 @@ const (
 	DefaultNodeUpdateLimit = 1
 )
 
+//go:generate mockgen -destination ./mock/mock_config_reconciler.go . ConfigReconcilerInterface
 type ConfigReconcilerInterface interface {
 	CreateConfigForNode(string, *corev1.Node) (*v1alpha1.NodeConfig, error)
 }
