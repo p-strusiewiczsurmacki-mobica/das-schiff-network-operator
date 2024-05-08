@@ -58,7 +58,6 @@ var _ = Describe("ConfigReconciler", func() {
 			Expect(err).ToNot(HaveOccurred())
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 			defer cancel()
-			// var err error
 			go func() {
 				err = r.reconcileDebounced(ctx)
 			}()

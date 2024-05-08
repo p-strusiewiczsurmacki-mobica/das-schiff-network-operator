@@ -15,6 +15,26 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+//go:generate mockgen -destination ./mock/mock_nodeconfig.go . ConfigInterface
+type ConfigInterface interface {
+	CrateInvalid(ctx context.Context, c client.Client) error
+	CreateBackup(ctx context.Context, c client.Client) error
+	Deploy(ctx context.Context, c client.Client, logger logr.Logger, invalidationTimeout time.Duration) error
+	GetActive() bool
+	GetCancelFunc() *context.CancelFunc
+	GetCurrentConfigStatus() string
+	GetDeployed() bool
+	GetInvalid() *v1alpha1.NodeConfig
+	GetName() string
+	GetNext() *v1alpha1.NodeConfig
+	Prune(ctx context.Context, c client.Client) error
+	SetActive(value bool)
+	SetBackupAsNext() bool
+	SetCancelFunc(f *context.CancelFunc)
+	SetDeployed(value bool)
+	UpdateNext(next *v1alpha1.NodeConfig)
+}
+
 const (
 	StatusProvisioning = "provisioning"
 	StatusInvalid      = "invalid"
@@ -52,6 +72,15 @@ func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
 	return nc
 }
 
+func NewEmpty(name string) *Config {
+	nc := &Config{
+		name:    name,
+		current: v1alpha1.NewEmptyConfig(name),
+	}
+	nc.active.Store(true)
+	return nc
+}
+
 func (nc *Config) SetCancelFunc(f *context.CancelFunc) {
 	nc.cancelFunc.Store(f)
 }
@@ -66,12 +95,12 @@ func (nc *Config) GetName() string {
 	return nc.name
 }
 
-func (nc *Config) GetActive() bool {
-	return nc.active.Load()
-}
-
 func (nc *Config) SetActive(value bool) {
 	nc.active.Store(value)
+}
+
+func (nc *Config) GetActive() bool {
+	return nc.active.Load()
 }
 
 func (nc *Config) SetDeployed(value bool) {
@@ -111,15 +140,6 @@ func (nc *Config) UpdateNext(next *v1alpha1.NodeConfig) {
 		nc.next = v1alpha1.NewEmptyConfig(nc.name)
 	}
 	v1alpha1.CopyNodeConfig(next, nc.next, nc.name)
-}
-
-func NewEmpty(name string) *Config {
-	nc := &Config{
-		name:    name,
-		current: v1alpha1.NewEmptyConfig(name),
-	}
-	nc.active.Store(true)
-	return nc
 }
 
 func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger, invalidationTimeout time.Duration) error {

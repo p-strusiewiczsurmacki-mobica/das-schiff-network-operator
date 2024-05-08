@@ -28,7 +28,7 @@ const (
 
 type ConfigManager struct {
 	client       client.Client
-	configsMap   *configmap.ConfigMap
+	configsMap   configmap.Interface
 	cr           reconciler.ConfigReconcilerInterface
 	nr           reconciler.NodeReconcilerInterface
 	changes      chan bool
@@ -179,7 +179,7 @@ func (cm *ConfigManager) updateConfigs() error {
 	return nil
 }
 
-func (cm *ConfigManager) deploy(ctx context.Context, configs []*nodeconfig.Config) error {
+func (cm *ConfigManager) deploy(ctx context.Context, configs []nodeconfig.ConfigInterface) error {
 	for _, cfg := range configs {
 		cfg.SetDeployed(false)
 	}
@@ -199,7 +199,7 @@ func (cm *ConfigManager) deploy(ctx context.Context, configs []*nodeconfig.Confi
 	errCh := make(chan error, len(configs))
 	for _, cfg := range configs {
 		wg.Add(1)
-		go func(config *nodeconfig.Config) {
+		go func(config nodeconfig.ConfigInterface) {
 			defer wg.Done()
 
 			if err := cm.sem.Acquire(ctx, 1); err != nil {
@@ -260,7 +260,7 @@ func (cm *ConfigManager) checkErrors(errCh chan error) error {
 }
 
 // nolint: contextcheck
-func (cm *ConfigManager) deployConfig(ctx context.Context, cfg *nodeconfig.Config) error {
+func (cm *ConfigManager) deployConfig(ctx context.Context, cfg nodeconfig.ConfigInterface) error {
 	if cfg.GetActive() {
 		cfgContext, cfgCancel := context.WithTimeout(ctx, cm.timeout)
 		cfgContext = context.WithValue(cfgContext, nodeconfig.ParentCtx, ctx)
@@ -282,7 +282,7 @@ func (cm *ConfigManager) deployConfig(ctx context.Context, cfg *nodeconfig.Confi
 	return nil
 }
 
-func (cm *ConfigManager) validateConfigs(configs []*nodeconfig.Config) error {
+func (cm *ConfigManager) validateConfigs(configs []nodeconfig.ConfigInterface) error {
 	cm.logger.Info("validating configs...")
 	for _, cfg := range configs {
 		if !cfg.GetActive() {
@@ -339,7 +339,7 @@ func (cm *ConfigManager) restoreBackup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error converting config map to slice: %w", err)
 	}
-	toDeploy := []*nodeconfig.Config{}
+	toDeploy := []nodeconfig.ConfigInterface{}
 	for _, cfg := range slice {
 		if cfg.GetDeployed() {
 			if backupAvailable := cfg.SetBackupAsNext(); backupAvailable {

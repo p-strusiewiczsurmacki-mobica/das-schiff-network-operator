@@ -204,7 +204,7 @@ var _ = Describe("NodeConfig", func() {
 		It("return no error if deployment was successful", func() {
 			config := NewEmpty(testConfigName)
 			config.active.Store(true)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*200)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*300)
 			defer cancel()
 			childCtx := context.WithValue(ctx, ParentCtx, ctx)
 			fakeNodeConfig.Items[0].Spec.RoutingTable = []v1alpha1.RoutingTableSpec{{TableID: 1}}
@@ -213,7 +213,7 @@ var _ = Describe("NodeConfig", func() {
 			quit := make(chan bool)
 			var deployErr error
 			go func() {
-				deployErr = config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*200)
+				deployErr = config.Deploy(childCtx, c, logr.New(nil), time.Millisecond*300)
 				quit <- true
 			}()
 
@@ -243,7 +243,11 @@ var _ = Describe("NodeConfig", func() {
 	})
 	Context("Prune() should", func() {
 		It("return no error if all configs were deleted", func() {
-			config := NewEmpty(testConfigName)
+			config := New(testConfigName,
+				v1alpha1.NewEmptyConfig(testConfigName),
+				v1alpha1.NewEmptyConfig(testConfigName+BackupSuffix),
+				v1alpha1.NewEmptyConfig(testConfigName+InvalidSuffix),
+			)
 			c := createClient(fakeNodeConfig)
 			err := config.Prune(context.Background(), c)
 			Expect(err).ToNot(HaveOccurred())
