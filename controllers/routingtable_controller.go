@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
+	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,7 +57,7 @@ func (r *RoutingTableReconciler) Reconcile(ctx context.Context, _ ctrl.Request) 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RoutingTableReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.RoutingTable{}).
+		For(&v1alpha1.RoutingTable{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

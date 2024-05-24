@@ -22,7 +22,7 @@ import (
 	"os"
 	"strings"
 
-	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
+	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -76,7 +76,7 @@ func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.NodeConfig{}, builder.WithPredicates(namePredicates)).
+		For(&v1alpha1.NodeConfig{}, builder.WithPredicates(namePredicates)).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

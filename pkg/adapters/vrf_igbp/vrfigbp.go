@@ -1,20 +1,19 @@
-package reconciler
+package adapters
 
 import (
-	"context"
 	"fmt"
 	"os"
 
 	"github.com/go-logr/logr"
+	"github.com/telekom/das-schiff-network-operator/pkg/agent"
 	"github.com/telekom/das-schiff-network-operator/pkg/anycast"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/frr"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type LegacyReconciler struct {
+type VrfIgbp struct {
 	netlinkManager *nl.Manager
 	config         *config.Config
 	frrManager     *frr.Manager
@@ -24,9 +23,9 @@ type LegacyReconciler struct {
 	logger         logr.Logger
 }
 
-func NewLegacyReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger) (*LegacyReconciler, error) {
-	reconciler := &LegacyReconciler{
-		netlinkManager: &nl.Manager{},
+func New(anycastTracker *anycast.Tracker, logger logr.Logger) (agent.Adapter, error) {
+	reconciler := &VrfIgbp{
+		netlinkManager: nl.NewManager(&nl.Toolkit{}),
 		frrManager:     frr.NewFRRManager(),
 		anycastTracker: anycastTracker,
 		logger:         logger,
@@ -50,9 +49,8 @@ func NewLegacyReconciler(clusterClient client.Client, anycastTracker *anycast.Tr
 		return nil, fmt.Errorf("error loading networking healthcheck config: %w", err)
 	}
 
-	tcpDialer := healthcheck.NewTCPDialer(nc.Timeout)
-	reconciler.healthChecker, err = healthcheck.NewHealthChecker(clusterClient,
-		healthcheck.NewDefaultHealthcheckToolkit(reconciler.frrManager, tcpDialer),
+	reconciler.healthChecker, err = healthcheck.NewHealthChecker(nil,
+		healthcheck.NewDefaultHealthcheckToolkit(reconciler.frrManager, nil),
 		nc)
 	if err != nil {
 		return nil, fmt.Errorf("error creating netwokring healthchecker: %w", err)
@@ -61,23 +59,16 @@ func NewLegacyReconciler(clusterClient client.Client, anycastTracker *anycast.Tr
 	return reconciler, nil
 }
 
-func (r *LegacyReconciler) checkHealth(ctx context.Context) error {
-	_, err := r.healthChecker.IsFRRActive()
-	if err != nil {
+func (r *VrfIgbp) CheckHealth() error {
+	if _, err := r.healthChecker.IsFRRActive(); err != nil {
 		return fmt.Errorf("error checking FRR status: %w", err)
 	}
-	if err = r.healthChecker.CheckInterfaces(); err != nil {
+	if err := r.healthChecker.CheckInterfaces(); err != nil {
 		return fmt.Errorf("error checking network interfaces: %w", err)
-	}
-	if err = r.healthChecker.CheckReachability(); err != nil {
-		return fmt.Errorf("error checking network reachability: %w", err)
-	}
-	if err = r.healthChecker.RemoveTaints(ctx); err != nil {
-		return fmt.Errorf("error removing taint from the node: %w", err)
 	}
 	return nil
 }
 
-func (r *LegacyReconciler) getConfig() *config.Config {
+func (r *VrfIgbp) GetConfig() *config.Config {
 	return r.config
 }

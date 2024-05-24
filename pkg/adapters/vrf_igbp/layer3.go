@@ -1,35 +1,22 @@
-package reconciler
+package adapters
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"time"
 
-	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
+	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/frr"
-	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const defaultSleep = 2 * time.Second
 
-func (r *reconcile) fetchNodeConfig(ctx context.Context) (*networkv1alpha1.NodeConfig, error) {
-	cfg := &networkv1alpha1.NodeConfig{}
-	err := r.client.Get(ctx, types.NamespacedName{Name: os.Getenv(healthcheck.NodenameEnv)}, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("error getting NodeConfig: %w", err)
-	}
-	return cfg, nil
-}
-
 // nolint: contextcheck // context is not relevant
-func (r *LegacyReconciler) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurationSpec, taas []networkv1alpha1.RoutingTableSpec) error {
+func (r *VrfIgbp) ReconcileLayer3(l3vnis []v1alpha1.VRFRouteConfigurationSpec, taas []v1alpha1.RoutingTableSpec) error {
 	vrfConfigMap, err := r.createVrfConfigMap(l3vnis)
 	if err != nil {
 		return err
@@ -84,7 +71,7 @@ func (r *LegacyReconciler) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConf
 	return nil
 }
 
-func (r *LegacyReconciler) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice bool) error {
+func (r *VrfIgbp) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice bool) error {
 	changed, err := r.frrManager.Configure(frr.Configuration{
 		VRFs: vrfConfigs,
 		ASN:  r.config.ServerASN,
@@ -115,7 +102,7 @@ func (r *LegacyReconciler) configureFRR(vrfConfigs []frr.VRFConfiguration, reloa
 	return nil
 }
 
-func (r *LegacyReconciler) reloadFRR() error {
+func (r *VrfIgbp) reloadFRR() error {
 	r.logger.Info("trying to reload FRR config because it changed")
 	err := r.frrManager.ReloadFRR()
 	if err != nil {
@@ -131,7 +118,7 @@ func (r *LegacyReconciler) reloadFRR() error {
 	return nil
 }
 
-func (r *LegacyReconciler) createVrfConfigMap(l3vnis []networkv1alpha1.VRFRouteConfigurationSpec) (map[string]frr.VRFConfiguration, error) {
+func (r *VrfIgbp) createVrfConfigMap(l3vnis []v1alpha1.VRFRouteConfigurationSpec) (map[string]frr.VRFConfiguration, error) {
 	vrfConfigMap := map[string]frr.VRFConfiguration{}
 	for i := range l3vnis {
 		spec := l3vnis[i]
@@ -171,7 +158,7 @@ func (r *LegacyReconciler) createVrfConfigMap(l3vnis []networkv1alpha1.VRFRouteC
 	return vrfConfigMap, nil
 }
 
-func createVrfFromTaaS(taas []networkv1alpha1.RoutingTableSpec) map[string]frr.VRFConfiguration {
+func createVrfFromTaaS(taas []v1alpha1.RoutingTableSpec) map[string]frr.VRFConfiguration {
 	vrfConfigMap := map[string]frr.VRFConfiguration{}
 
 	for i := range taas {
@@ -189,7 +176,7 @@ func createVrfFromTaaS(taas []networkv1alpha1.RoutingTableSpec) map[string]frr.V
 	return vrfConfigMap
 }
 
-func createVrfConfig(vrfConfigMap map[string]frr.VRFConfiguration, spec *networkv1alpha1.VRFRouteConfigurationSpec, vni int, rt string) (*frr.VRFConfiguration, error) {
+func createVrfConfig(vrfConfigMap map[string]frr.VRFConfiguration, spec *v1alpha1.VRFRouteConfigurationSpec, vni int, rt string) (*frr.VRFConfiguration, error) {
 	// If VRF is not yet in dict, initialize it
 	if _, ok := vrfConfigMap[spec.VRF]; !ok {
 		vrfConfigMap[spec.VRF] = frr.VRFConfiguration{
@@ -230,7 +217,7 @@ func createVrfConfig(vrfConfigMap map[string]frr.VRFConfiguration, spec *network
 	return &cfg, nil
 }
 
-func (r *LegacyReconciler) reconcileL3Netlink(vrfConfigs []frr.VRFConfiguration) ([]nl.VRFInformation, bool, error) {
+func (r *VrfIgbp) reconcileL3Netlink(vrfConfigs []frr.VRFConfiguration) ([]nl.VRFInformation, bool, error) {
 	existing, err := r.netlinkManager.ListL3()
 	if err != nil {
 		return nil, false, fmt.Errorf("error listing L3 VRF information: %w", err)
@@ -277,7 +264,7 @@ func (r *LegacyReconciler) reconcileL3Netlink(vrfConfigs []frr.VRFConfiguration)
 	return toCreate, len(toDelete) > 0, nil
 }
 
-func (r *LegacyReconciler) reconcileTaasNetlink(vrfConfigs []frr.VRFConfiguration) (bool, error) {
+func (r *VrfIgbp) reconcileTaasNetlink(vrfConfigs []frr.VRFConfiguration) (bool, error) {
 	existing, err := r.netlinkManager.ListTaas()
 	if err != nil {
 		return false, fmt.Errorf("error listing TaaS VRF information: %w", err)
@@ -296,7 +283,7 @@ func (r *LegacyReconciler) reconcileTaasNetlink(vrfConfigs []frr.VRFConfiguratio
 	return deletedInterface, nil
 }
 
-func (r *LegacyReconciler) cleanupTaasNetlink(existing []nl.TaasInformation, intended []frr.VRFConfiguration) (bool, error) {
+func (r *VrfIgbp) cleanupTaasNetlink(existing []nl.TaasInformation, intended []frr.VRFConfiguration) (bool, error) {
 	deletedInterface := false
 	for _, cfg := range existing {
 		stillExists := false
@@ -316,7 +303,7 @@ func (r *LegacyReconciler) cleanupTaasNetlink(existing []nl.TaasInformation, int
 	return deletedInterface, nil
 }
 
-func (r *LegacyReconciler) createTaasNetlink(existing []nl.TaasInformation, intended []frr.VRFConfiguration) error {
+func (r *VrfIgbp) createTaasNetlink(existing []nl.TaasInformation, intended []frr.VRFConfiguration) error {
 	for i := range intended {
 		alreadyExists := false
 		for _, cfg := range existing {
@@ -339,7 +326,7 @@ func (r *LegacyReconciler) createTaasNetlink(existing []nl.TaasInformation, inte
 	return nil
 }
 
-func (r *LegacyReconciler) reconcileExisting(cfg nl.VRFInformation) error {
+func (r *VrfIgbp) reconcileExisting(cfg nl.VRFInformation) error {
 	if err := r.netlinkManager.EnsureBPFProgram(cfg); err != nil {
 		return fmt.Errorf("error ensuring BPF program on VRF")
 	}
@@ -374,7 +361,7 @@ func prepareVRFsToCreate(vrfConfigs []frr.VRFConfiguration, existing []nl.VRFInf
 	return create
 }
 
-func handlePrefixItemList(input []networkv1alpha1.VrfRouteConfigurationPrefixItem, seq int, community *string) (frr.PrefixList, error) {
+func handlePrefixItemList(input []v1alpha1.VrfRouteConfigurationPrefixItem, seq int, community *string) (frr.PrefixList, error) {
 	prefixList := frr.PrefixList{
 		Seq:       seq + 1,
 		Community: community,
@@ -389,7 +376,7 @@ func handlePrefixItemList(input []networkv1alpha1.VrfRouteConfigurationPrefixIte
 	return prefixList, nil
 }
 
-func copyPrefixItemToFRRItem(n int, item networkv1alpha1.VrfRouteConfigurationPrefixItem) (frr.PrefixedRouteItem, error) {
+func copyPrefixItemToFRRItem(n int, item v1alpha1.VrfRouteConfigurationPrefixItem) (frr.PrefixedRouteItem, error) {
 	_, network, err := net.ParseCIDR(item.CIDR)
 	if err != nil {
 		return frr.PrefixedRouteItem{}, fmt.Errorf("error parsing CIDR :%s: %w", item.CIDR, err)
@@ -407,26 +394,4 @@ func copyPrefixItemToFRRItem(n int, item networkv1alpha1.VrfRouteConfigurationPr
 		GE:     item.GE,
 		LE:     item.LE,
 	}, nil
-}
-
-func (r *reconcileConfig) fetchLayer3(ctx context.Context) ([]networkv1alpha1.VRFRouteConfiguration, error) {
-	vrfs := &networkv1alpha1.VRFRouteConfigurationList{}
-	err := r.client.List(ctx, vrfs)
-	if err != nil {
-		r.Logger.Error(err, "error getting list of VRFs from Kubernetes")
-		return nil, fmt.Errorf("error getting list of VRFs from Kubernetes: %w", err)
-	}
-
-	return vrfs.Items, nil
-}
-
-func (r *reconcileConfig) fetchTaas(ctx context.Context) ([]networkv1alpha1.RoutingTable, error) {
-	tables := &networkv1alpha1.RoutingTableList{}
-	err := r.client.List(ctx, tables)
-	if err != nil {
-		r.Logger.Error(err, "error getting list of TaaS from Kubernetes")
-		return nil, fmt.Errorf("error getting list of TaaS from Kubernetes: %w", err)
-	}
-
-	return tables.Items, nil
 }

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
+	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -59,7 +59,7 @@ func (r *Layer2NetworkConfigurationReconciler) Reconcile(ctx context.Context, _ 
 // SetupWithManager sets up the controller with the Manager.
 func (r *Layer2NetworkConfigurationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.Layer2NetworkConfiguration{}).
+		For(&v1alpha1.Layer2NetworkConfiguration{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
