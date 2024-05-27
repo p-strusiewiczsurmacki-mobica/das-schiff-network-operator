@@ -29,6 +29,13 @@ const (
 	nodeConfigFilePerm    = 0o600
 )
 
+type Adapter interface {
+	reconcileLayer3([]v1alpha1.VRFRouteConfigurationSpec, []v1alpha1.RoutingTableSpec) error
+	reconcileLayer2([]v1alpha1.Layer2NetworkConfigurationSpec) error
+	checkHealth(context.Context) error
+	getConfig() *config.Config
+}
+
 type Reconciler struct {
 	client         client.Client
 	netlinkManager *nl.Manager
@@ -51,7 +58,7 @@ type reconcile struct {
 	logr.Logger
 }
 
-func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeConfigPath string) (*Reconciler, error) {
+func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeConfigPath string, adapter Adapter) (*Reconciler, error) {
 	reconciler := &Reconciler{
 		client:         clusterClient,
 		netlinkManager: nl.NewManager(&nl.Toolkit{}),
@@ -104,8 +111,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) {
 
 func (r *Reconciler) reconcileDebounced(ctx context.Context) error {
 	reconciler := &reconcile{
-		Reconciler: reconciler,
-		Logger:     reconciler.logger,
+		Reconciler: r,
+		Logger:     r.logger,
 	}
 
 	reconciler.Logger.Info("Reloading config")
@@ -114,7 +121,7 @@ func (r *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	// get NodeConfig from apiserver
-	cfg, err := r.fetchNodeConfig(ctx)
+	cfg, err := reconciler.fetchNodeConfig(ctx)
 	if err != nil {
 		// discard IsNotFound error
 		if apierrors.IsNotFound(err) {
@@ -141,7 +148,7 @@ func (r *Reconciler) reconcileDebounced(ctx context.Context) error {
 	// check if node is healthly after reconciliation
 	if err := r.checkHealth(ctx); err != nil {
 		// if node is not healthly set NodeConfig's status as invalid and restore last known working config
-		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
+		if err := reconciler.invalidateAndRestore(ctx, cfg); err != nil {
 			return fmt.Errorf("reconciler restoring config: %w", err)
 		}
 

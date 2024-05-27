@@ -119,11 +119,11 @@ func (r *LegacyReconciler) reloadFRR() error {
 	r.logger.Info("trying to reload FRR config because it changed")
 	err := r.frrManager.ReloadFRR()
 	if err != nil {
-		r.Logger.Error(err, "error reloading FRR systemd unit, trying restart")
+		r.logger.Error(err, "error reloading FRR systemd unit, trying restart")
 
 		err = r.frrManager.RestartFRR()
 		if err != nil {
-			r.Logger.Error(err, "error restarting FRR systemd unit")
+			r.logger.Error(err, "error restarting FRR systemd unit")
 			return fmt.Errorf("error reloading / restarting FRR systemd unit: %w", err)
 		}
 	}

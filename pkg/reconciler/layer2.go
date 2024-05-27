@@ -62,7 +62,7 @@ func (r *LegacyReconciler) reconcileLayer2(l2vnis []networkv1alpha1.Layer2Networ
 	}
 
 	for i := range toDelete {
-		r.Logger.Info("Deleting Layer2 because it is no longer configured", "vlan", toDelete[i].VlanID, "vni", toDelete[i].VNI)
+		r.logger.Info("Deleting Layer2 because it is no longer configured", "vlan", toDelete[i].VlanID, "vni", toDelete[i].VNI)
 		errs := r.netlinkManager.CleanupL2(&toDelete[i])
 		for _, err := range errs {
 			r.logger.Error(err, "Error deleting Layer2", "vlan", toDelete[i].VlanID, "vni", toDelete[i].VNI)

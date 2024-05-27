@@ -62,20 +62,18 @@ func NewLegacyReconciler(clusterClient client.Client, anycastTracker *anycast.Tr
 }
 
 func (r *LegacyReconciler) checkHealth(ctx context.Context) error {
-	if !r.healthChecker.IsNetworkingHealthy() {
-		_, err := r.healthChecker.IsFRRActive()
-		if err != nil {
-			return fmt.Errorf("error checking FRR status: %w", err)
-		}
-		if err = r.healthChecker.CheckInterfaces(); err != nil {
-			return fmt.Errorf("error checking network interfaces: %w", err)
-		}
-		if err = r.healthChecker.CheckReachability(); err != nil {
-			return fmt.Errorf("error checking network reachability: %w", err)
-		}
-		if err = r.healthChecker.RemoveTaints(ctx); err != nil {
-			return fmt.Errorf("error removing taint from the node: %w", err)
-		}
+	_, err := r.healthChecker.IsFRRActive()
+	if err != nil {
+		return fmt.Errorf("error checking FRR status: %w", err)
+	}
+	if err = r.healthChecker.CheckInterfaces(); err != nil {
+		return fmt.Errorf("error checking network interfaces: %w", err)
+	}
+	if err = r.healthChecker.CheckReachability(); err != nil {
+		return fmt.Errorf("error checking network reachability: %w", err)
+	}
+	if err = r.healthChecker.RemoveTaints(ctx); err != nil {
+		return fmt.Errorf("error removing taint from the node: %w", err)
 	}
 	return nil
 }

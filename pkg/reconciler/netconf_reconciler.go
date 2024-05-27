@@ -22,10 +22,10 @@ func (*NetconfReconciler) getConfig() *config.Config {
 	return nil
 }
 
-func (*NetconfReconciler) reconcileLayer3([]networkv1alpha1.VRFRouteConfiguration, []networkv1alpha1.RoutingTable) error {
+func (*NetconfReconciler) reconcileLayer3([]networkv1alpha1.VRFRouteConfigurationSpec, []networkv1alpha1.RoutingTableSpec) error {
 	return errors.ErrUnsupported
 }
 
-func (*NetconfReconciler) reconcileLayer2([]networkv1alpha1.Layer2NetworkConfiguration) error {
+func (*NetconfReconciler) reconcileLayer2([]networkv1alpha1.Layer2NetworkConfigurationSpec) error {
 	return errors.ErrUnsupported
 }
