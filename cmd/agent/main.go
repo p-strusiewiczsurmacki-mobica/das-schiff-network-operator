@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/go-logr/zapr"
-	netnsadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/netns"
 	vrfigbpadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/vrf_igbp"
 	"github.com/telekom/das-schiff-network-operator/pkg/agent"
 	agentpb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
@@ -25,7 +24,7 @@ func main() {
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
 			"Command-line flags override configuration from this file.")
-	flag.StringVar(&agentType, "agent", "legacy", "Use selected agent type (default: legacy).")
+	flag.StringVar(&agentType, "agent", "vrf-igbp", "Use selected agent type (default: vrf-igbp).")
 	flag.IntVar(&port, "port", agent.DefaultPort, fmt.Sprintf("gRPC listening port. (default: %d)", agent.DefaultPort))
 
 	zc := zap.NewProductionConfig()
@@ -44,7 +43,8 @@ func main() {
 	var adapter agent.Adapter
 	switch agentType {
 	case "netconf":
-		adapter, err = netnsadapter.New()
+		log.Error(fmt.Errorf("agent is currently not supported"), "type", agentType)
+		os.Exit(1)
 	default:
 		adapter, err = vrfigbpadapter.New(anycastTracker, log)
 	}

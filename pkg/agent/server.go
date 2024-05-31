@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
-	pb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
+	agentpb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -20,7 +20,7 @@ const (
 
 type Server struct {
 	adapter Adapter
-	pb.UnimplementedAgentServer
+	agentpb.UnimplementedAgentServer
 	logger *logr.Logger
 }
 
@@ -29,6 +29,10 @@ type Adapter interface {
 	ReconcileLayer2([]v1alpha1.Layer2NetworkConfigurationSpec) error
 	CheckHealth() error
 	GetConfig() *config.Config
+}
+
+type Client interface {
+	SendConfig(context.Context, *v1alpha1.NodeConfig) error
 }
 
 func NewServer(adapter Adapter, logger *logr.Logger) *Server {
@@ -40,7 +44,7 @@ func NewServer(adapter Adapter, logger *logr.Logger) *Server {
 }
 
 // nolint: wrapcheck
-func (s Server) SetConfiguration(_ context.Context, nc *pb.NetworkConfiguration) (*emptypb.Empty, error) {
+func (s Server) SetConfiguration(_ context.Context, nc *agentpb.NetworkConfiguration) (*emptypb.Empty, error) {
 	s.logger.Info("new request")
 	if nc == nil {
 		s.logger.Info("nil request")

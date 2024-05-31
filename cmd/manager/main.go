@@ -25,8 +25,6 @@ import (
 	"sort"
 	"strconv"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -34,8 +32,8 @@ import (
 
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
+	vrfigbpadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/vrf_igbp"
 	"github.com/telekom/das-schiff-network-operator/pkg/agent"
-	agentpb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
 	"github.com/telekom/das-schiff-network-operator/pkg/anycast"
 	"github.com/telekom/das-schiff-network-operator/pkg/bpf"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
@@ -98,7 +96,7 @@ func main() {
 	var configFile string
 	var interfacePrefix string
 	var nodeConfigPath string
-	var useNetconf bool
+	var agentType string
 	var agentPort int
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
@@ -110,8 +108,7 @@ func main() {
 		"Interface prefix for bridge devices for MACVlan sync")
 	flag.StringVar(&nodeConfigPath, "nodeconfig-path", reconciler.DefaultNodeConfigPath,
 		"Path to store working node configuration.")
-	flag.BoolVar(&useNetconf, "use-netconf", false,
-		"Use NETCONF interface to configure hosts instead of Netlink and FRR.")
+	flag.StringVar(&agentType, "agent", "vrf-igbp", "Use selected agent type (default: vrf-igbp).")
 	flag.IntVar(&agentPort, "agentPort", agent.DefaultPort,
 		"gRPC agent port. (default: "+strconv.Itoa(agent.DefaultPort)+")")
 	opts := zap.Options{
@@ -140,13 +137,25 @@ func main() {
 		}
 	}
 
-	if err := start(&options, agentPort, onlyBPFMode, nodeConfigPath, interfacePrefix); err != nil {
+	var agentClient agent.Client
+	switch agentType {
+	case "netconf":
+		setupLog.Error(fmt.Errorf("netconf agent is currently not supported"), "unsupported error")
+		os.Exit(1)
+	default:
+		agentClient, err = vrfigbpadapter.NewClient(fmt.Sprintf(":%d", agentPort))
+		if err != nil {
+			setupLog.Error(err, "error creating agent's client")
+		}
+	}
+
+	if err := start(&options, onlyBPFMode, nodeConfigPath, interfacePrefix, agentClient); err != nil {
 		setupLog.Error(err, "error running manager")
 		os.Exit(1)
 	}
 }
 
-func start(options *manager.Options, agentPort int, onlyBPFMode bool, nodeConfigPath, interfacePrefix string) error {
+func start(options *manager.Options, onlyBPFMode bool, nodeConfigPath, interfacePrefix string, agentClient agent.Client) error {
 	clientConfig := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(clientConfig, *options)
 	if err != nil {
@@ -163,18 +172,6 @@ func start(options *manager.Options, agentPort int, onlyBPFMode bool, nodeConfig
 	if err := (&v1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create webhook VRFRouteConfiguration: %w", err)
 	}
-
-	var grpcOpts []grpc.DialOption
-	grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	conn, err := grpc.NewClient(fmt.Sprintf(":%d", agentPort), grpcOpts...)
-	if err != nil {
-		return fmt.Errorf("unable to create gRPC connection: %w", err)
-	}
-	defer conn.Close()
-
-	agentClient := agentpb.NewAgentClient(conn)
-
-	setupLog.Info("configured gRPC client")
 
 	if err := initComponents(mgr, anycastTracker, cfg, clientConfig, onlyBPFMode, nodeConfigPath, agentClient); err != nil {
 		return fmt.Errorf("unable to initialize components: %w", err)
@@ -193,7 +190,7 @@ func start(options *manager.Options, agentPort int, onlyBPFMode bool, nodeConfig
 	return nil
 }
 
-func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *config.Config, clientConfig *rest.Config, onlyBPFMode bool, nodeConfigPath string, agentClient agentpb.AgentClient) error {
+func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *config.Config, clientConfig *rest.Config, onlyBPFMode bool, nodeConfigPath string, agentClient agent.Client) error {
 	// Start VRFRouteConfigurationReconciler when we are not running in only BPF mode.
 	if !onlyBPFMode {
 		if err := setupReconcilers(mgr, nodeConfigPath, agentClient); err != nil {
@@ -271,7 +268,7 @@ func setupBPF(cfg *config.Config) error {
 	return nil
 }
 
-func setupReconcilers(mgr manager.Manager, nodeConfigPath string, agentClient agentpb.AgentClient) error {
+func setupReconcilers(mgr manager.Manager, nodeConfigPath string, agentClient agent.Client) error {
 	r, err := reconciler.NewReconciler(mgr.GetClient(), mgr.GetLogger(), nodeConfigPath, agentClient)
 	if err != nil {
 		return fmt.Errorf("unable to create debounced reconciler: %w", err)

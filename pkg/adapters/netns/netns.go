@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"errors"
 
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
@@ -8,24 +9,34 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 )
 
-type NetNS struct{}
+type netNS struct{}
 
 func New() (agent.Adapter, error) {
-	return &NetNS{}, nil
+	return &netNS{}, nil
 }
 
-func (*NetNS) CheckHealth() error {
+func (*netNS) CheckHealth() error {
 	return errors.ErrUnsupported
 }
 
-func (*NetNS) GetConfig() *config.Config {
+func (*netNS) GetConfig() *config.Config {
 	return nil
 }
 
-func (*NetNS) ReconcileLayer3([]v1alpha1.VRFRouteConfigurationSpec, []v1alpha1.RoutingTableSpec) error {
+func (*netNS) ReconcileLayer3([]v1alpha1.VRFRouteConfigurationSpec, []v1alpha1.RoutingTableSpec) error {
 	return errors.ErrUnsupported
 }
 
-func (*NetNS) ReconcileLayer2([]v1alpha1.Layer2NetworkConfigurationSpec) error {
+func (*netNS) ReconcileLayer2([]v1alpha1.Layer2NetworkConfigurationSpec) error {
+	return errors.ErrUnsupported
+}
+
+type netNSClient struct{}
+
+func NewClient() agent.Client {
+	return &netNSClient{}
+}
+
+func (*netNSClient) SendConfig(context.Context, *v1alpha1.NodeConfig) error {
 	return errors.ErrUnsupported
 }

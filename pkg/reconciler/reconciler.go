@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
-	agentpb "github.com/telekom/das-schiff-network-operator/pkg/agent/pb"
+	"github.com/telekom/das-schiff-network-operator/pkg/agent"
 	"github.com/telekom/das-schiff-network-operator/pkg/debounce"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nodeconfig"
@@ -34,7 +34,7 @@ type Reconciler struct {
 	healthChecker  *healthcheck.HealthChecker
 	nodeConfig     *v1alpha1.NodeConfig
 	nodeConfigPath string
-	agentClient    agentpb.AgentClient
+	agentClient    agent.Client
 
 	debouncer *debounce.Debouncer
 }
@@ -44,7 +44,7 @@ type reconcile struct {
 	logr.Logger
 }
 
-func NewReconciler(clusterClient client.Client, logger logr.Logger, nodeConfigPath string, agentClient agentpb.AgentClient) (*Reconciler, error) {
+func NewReconciler(clusterClient client.Client, logger logr.Logger, nodeConfigPath string, agentClient agent.Client) (*Reconciler, error) {
 	reconciler := &Reconciler{
 		client:         clusterClient,
 		logger:         logger,
@@ -162,17 +162,7 @@ func (r *reconcile) sendConfig(ctx context.Context, nodeCfg *v1alpha1.NodeConfig
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 
-	nc := agentpb.NetworkConfiguration{
-		Data: []byte{},
-	}
-	data, err := json.Marshal(*nodeCfg)
-	if err != nil {
-		return fmt.Errorf("error marshaling NodeConfig: %w", err)
-	}
-
-	nc.Data = data
-
-	if _, err = r.agentClient.SetConfiguration(timeoutCtx, &nc); err != nil {
+	if err := r.agentClient.SendConfig(timeoutCtx, nodeCfg); err != nil {
 		return fmt.Errorf("error setting configuration: %w", err)
 	}
 
