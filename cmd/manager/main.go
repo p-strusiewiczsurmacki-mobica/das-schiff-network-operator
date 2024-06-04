@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -32,10 +31,10 @@ import (
 
 	"github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	vrfigbpadapter "github.com/telekom/das-schiff-network-operator/pkg/adapters/vrf_igbp"
 	"github.com/telekom/das-schiff-network-operator/pkg/agent"
 	"github.com/telekom/das-schiff-network-operator/pkg/anycast"
 	"github.com/telekom/das-schiff-network-operator/pkg/bpf"
+	grpcclient "github.com/telekom/das-schiff-network-operator/pkg/clients/grpc"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/macvlan"
@@ -98,6 +97,7 @@ func main() {
 	var nodeConfigPath string
 	var agentType string
 	var agentPort int
+	var agentAddr string
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -109,8 +109,8 @@ func main() {
 	flag.StringVar(&nodeConfigPath, "nodeconfig-path", reconciler.DefaultNodeConfigPath,
 		"Path to store working node configuration.")
 	flag.StringVar(&agentType, "agent", "vrf-igbp", "Use selected agent type (default: vrf-igbp).")
-	flag.IntVar(&agentPort, "agentPort", agent.DefaultPort,
-		"gRPC agent port. (default: "+strconv.Itoa(agent.DefaultPort)+")")
+	flag.StringVar(&agentAddr, "agentAddr", "", "Agent's address (default: '').")
+	flag.IntVar(&agentPort, "agentPort", agent.DefaultPort, fmt.Sprintf("Agent's port (default: %d).", agent.DefaultPort))
 	opts := zap.Options{
 		Development: true,
 	}
@@ -139,14 +139,16 @@ func main() {
 
 	var agentClient agent.Client
 	switch agentType {
-	case "netconf":
-		setupLog.Error(fmt.Errorf("netconf agent is currently not supported"), "unsupported error")
-		os.Exit(1)
+	case "vrf-igbp":
+		agentClient, err = grpcclient.NewClient(fmt.Sprintf("%s:%d", agentAddr, agentPort))
 	default:
-		agentClient, err = vrfigbpadapter.NewClient(fmt.Sprintf(":%d", agentPort))
-		if err != nil {
-			setupLog.Error(err, "error creating agent's client")
-		}
+		setupLog.Error(fmt.Errorf("agent %s is currently not supported", agentType), "unsupported error")
+		os.Exit(1)
+	}
+
+	if err != nil {
+		setupLog.Error(err, "error creating agent's client")
+		os.Exit(1)
 	}
 
 	if err := start(&options, onlyBPFMode, nodeConfigPath, interfacePrefix, agentClient); err != nil {

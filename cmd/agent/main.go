@@ -36,25 +36,24 @@ func main() {
 
 	log.Info("agent's port", "port", port)
 
-	var err error
-
 	anycastTracker := anycast.NewTracker(&nl.Toolkit{})
 
+	var err error
 	var adapter agent.Adapter
 	switch agentType {
-	case "netconf":
+	case "vrf-igbp":
+		adapter, err = vrfigbpadapter.New(anycastTracker, log)
+	default:
 		log.Error(fmt.Errorf("agent is currently not supported"), "type", agentType)
 		os.Exit(1)
-	default:
-		adapter, err = vrfigbpadapter.New(anycastTracker, log)
 	}
-
-	log.Info("created adapter", "type", agentType)
 
 	if err != nil {
 		log.Error(err, "error creating adapter")
 		os.Exit(1)
 	}
+
+	log.Info("created adapter", "type", agentType)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
