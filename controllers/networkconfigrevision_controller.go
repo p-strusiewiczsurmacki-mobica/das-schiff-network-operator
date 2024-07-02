@@ -20,8 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,22 +30,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// NodeReconciler reconciles a Node object.
-type NodeReconciler struct {
+// NetworkConfigRevisionReconciler reconciles a NodeConfig object.
+type NetworkConfigRevisionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
 	Reconciler *reconciler.NodeConfigReconciler
 }
 
-//+kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;update;watch
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=networkconfigrevisions,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=networkconfigrevisions/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=networkconfigrevisions/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
-func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
+func (r *NetworkConfigRevisionReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	// Run ReconcileDebounced through debouncer
@@ -55,16 +58,16 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *NetworkConfigRevisionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	predicates := predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return true },
-		UpdateFunc:  func(event.UpdateEvent) bool { return false },
-		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		UpdateFunc:  func(event.UpdateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Node{}).WithEventFilter(predicates).
+		For(&networkv1alpha1.NetworkConfigRevision{}).WithEventFilter(predicates).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

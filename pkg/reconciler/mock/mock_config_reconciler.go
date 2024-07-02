@@ -36,10 +36,10 @@ func (m *MockConfigReconcilerInterface) EXPECT() *MockConfigReconcilerInterfaceM
 }
 
 // CreateConfigForNode mocks base method.
-func (m *MockConfigReconcilerInterface) CreateConfigForNode(arg0 string, arg1 *v1.Node) (*v1alpha1.NodeConfig, error) {
+func (m *MockConfigReconcilerInterface) CreateConfigForNode(arg0 string, arg1 *v1.Node) (*v1alpha1.NodeNetworkConfig, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateConfigForNode", arg0, arg1)
-	ret0, _ := ret[0].(*v1alpha1.NodeConfig)
+	ret0, _ := ret[0].(*v1alpha1.NodeNetworkConfig)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
