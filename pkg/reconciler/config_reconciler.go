@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -74,15 +75,45 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
 
-	// get all configuration objects
-	var err error
-	cr.globalCfg, err = r.fetchConfigData(timeoutCtx)
+	globalCfg, err := r.fetchConfigData(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("error fetching configuration details: %w", err)
 	}
 
-	// inform config manager that it should update
-	cr.configManagerInform <- true
+	revision, err := v1alpha1.NewRevision(globalCfg)
+
+	if err != nil {
+		return fmt.Errorf("error preparing new config revision: %w", err)
+	}
+
+	revisions := &v1alpha1.NodeConfigRevisionList{}
+
+	cr.client.List(timeoutCtx, revisions, &client.ListOptions{})
+
+	slices.SortFunc(revisions.Items, func(a, b v1alpha1.NodeConfigRevision) int {
+		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time) * -1 // reverse result
+	})
+
+	if revision.Spec.Hash == revisions.Items[0].Spec.Hash {
+		// new revision equals to the last one - skip
+		return nil
+	}
+
+	for _, r := range revisions.Items {
+		cr.logger.Info("revision", "data", r)
+		if revision.Spec.Hash == r.Spec.Hash && r.Status.IsInvalid {
+			// new revision is equal to known invalid revision
+			return nil
+		}
+	}
+
+	if err := cr.client.Create(timeoutCtx, revision); err != nil {
+		return fmt.Errorf("error creating new NodeConfigRevision: %w", err)
+	}
+
+	if err := cr.client.Status().Update(timeoutCtx, revision); err != nil {
+		return fmt.Errorf("error setting revision status: %w", err)
+	}
 
 	cr.logger.Info("global config updated", "config", *cr.globalCfg)
 	return nil
