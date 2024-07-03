@@ -34,12 +34,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// NodeConfigReconciler reconciles a NodeConfig object.
-type NodeConfigReconciler struct {
+// NodeNetworkConfigReconciler reconciles a NodeConfig object.
+type NodeNetworkConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Reconciler *reconciler.Reconciler
+	Reconciler *reconciler.NodeNetworkConfigReconciler
 }
 
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
@@ -52,7 +52,7 @@ type NodeConfigReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.4/pkg/reconcile
-func (r *NodeConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
+func (r *NodeNetworkConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	// Run ReconcileDebounced through debouncer
@@ -62,7 +62,7 @@ func (r *NodeConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (c
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *NodeNetworkConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	namePredicates := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return strings.Contains(e.Object.GetName(), os.Getenv(healthcheck.NodenameEnv))
@@ -75,7 +75,7 @@ func (r *NodeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.NodeConfig{}, builder.WithPredicates(namePredicates)).
+		For(&networkv1alpha1.NodeNetworkConfig{}, builder.WithPredicates(namePredicates)).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

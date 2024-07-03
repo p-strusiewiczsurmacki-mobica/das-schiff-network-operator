@@ -229,17 +229,17 @@ func initComponents(mgr manager.Manager, anycastTracker *anycast.Tracker, cfg *c
 }
 
 func setupReconcilers(mgr manager.Manager, anycastTracker *anycast.Tracker, nodeConfigPath string) error {
-	r, err := reconciler.NewReconciler(mgr.GetClient(), anycastTracker, mgr.GetLogger(), nodeConfigPath)
+	r, err := reconciler.NewNodeNetworkConfigReconciler(mgr.GetClient(), anycastTracker, mgr.GetLogger(), nodeConfigPath)
 	if err != nil {
 		return fmt.Errorf("unable to create debounced reconciler: %w", err)
 	}
 
-	if err = (&controllers.NodeConfigReconciler{
+	if err = (&controllers.NodeNetworkConfigReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: r,
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
+		return fmt.Errorf("unable to create NodeConfig controller: %w", err)
 	}
 
 	return nil

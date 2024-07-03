@@ -123,10 +123,10 @@ func (mr *MockConfigInterfaceMockRecorder) GetCancelFunc() *gomock.Call {
 }
 
 // GetCurrent mocks base method.
-func (m *MockConfigInterface) GetCurrent() *v1alpha1.NodeConfig {
+func (m *MockConfigInterface) GetCurrent() *v1alpha1.NodeNetworkConfig {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetCurrent")
-	ret0, _ := ret[0].(*v1alpha1.NodeConfig)
+	ret0, _ := ret[0].(*v1alpha1.NodeNetworkConfig)
 	return ret0
 }
 
@@ -151,10 +151,10 @@ func (mr *MockConfigInterfaceMockRecorder) GetDeployed() *gomock.Call {
 }
 
 // GetInvalid mocks base method.
-func (m *MockConfigInterface) GetInvalid() *v1alpha1.NodeConfig {
+func (m *MockConfigInterface) GetInvalid() *v1alpha1.NodeNetworkConfig {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetInvalid")
-	ret0, _ := ret[0].(*v1alpha1.NodeConfig)
+	ret0, _ := ret[0].(*v1alpha1.NodeNetworkConfig)
 	return ret0
 }
 
@@ -179,10 +179,10 @@ func (mr *MockConfigInterfaceMockRecorder) GetName() *gomock.Call {
 }
 
 // GetNext mocks base method.
-func (m *MockConfigInterface) GetNext() *v1alpha1.NodeConfig {
+func (m *MockConfigInterface) GetNext() *v1alpha1.NodeNetworkConfig {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetNext")
-	ret0, _ := ret[0].(*v1alpha1.NodeConfig)
+	ret0, _ := ret[0].(*v1alpha1.NodeNetworkConfig)
 	return ret0
 }
 
@@ -243,7 +243,7 @@ func (mr *MockConfigInterfaceMockRecorder) SetDeployed(arg0 interface{}) *gomock
 }
 
 // UpdateNext mocks base method.
-func (m *MockConfigInterface) UpdateNext(arg0 *v1alpha1.NodeConfig) {
+func (m *MockConfigInterface) UpdateNext(arg0 *v1alpha1.NodeNetworkConfig) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "UpdateNext", arg0)
 }

@@ -350,7 +350,7 @@ func (cm *ConfigManager) loadConfigs(ctx context.Context) error {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	knownConfigs := &v1alpha1.NodeConfigList{}
+	knownConfigs := &v1alpha1.NodeNetworkConfigList{}
 	if err := cm.client.List(ctx, knownConfigs); err != nil {
 		return fmt.Errorf("error listing NodeConfigs: %w", err)
 	}
@@ -360,7 +360,7 @@ func (cm *ConfigManager) loadConfigs(ctx context.Context) error {
 	return nil
 }
 
-func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, knownConfigs *v1alpha1.NodeConfigList) {
+func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, knownConfigs *v1alpha1.NodeNetworkConfigList) {
 	for _, node := range nodes {
 		current, backup, invalid := cm.matchConfigs(knownConfigs, node)
 		cfg := nodeconfig.New(node.Name, current, backup, invalid)
@@ -371,7 +371,7 @@ func (cm *ConfigManager) createConfigsFromBackup(nodes map[string]*corev1.Node, 
 	}
 }
 
-func (cm *ConfigManager) matchConfigs(knownConfigs *v1alpha1.NodeConfigList, node *corev1.Node) (current, backup, invalid *v1alpha1.NodeConfig) {
+func (cm *ConfigManager) matchConfigs(knownConfigs *v1alpha1.NodeNetworkConfigList, node *corev1.Node) (current, backup, invalid *v1alpha1.NodeNetworkConfig) {
 	for i := range knownConfigs.Items {
 		for j := range knownConfigs.Items[i].OwnerReferences {
 			if knownConfigs.Items[i].OwnerReferences[j].UID == node.UID {

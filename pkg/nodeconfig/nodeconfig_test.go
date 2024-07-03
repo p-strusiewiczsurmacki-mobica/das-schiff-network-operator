@@ -64,11 +64,11 @@ var (
 			"resourceVersion": ""
 		}
 	}`
-	fakeNodeConfig *v1alpha1.NodeConfigList
+	fakeNodeConfig *v1alpha1.NodeNetworkConfigList
 )
 
 var _ = BeforeSuite(func() {
-	fakeNodeConfig = &v1alpha1.NodeConfigList{}
+	fakeNodeConfig = &v1alpha1.NodeNetworkConfigList{}
 	err := json.Unmarshal([]byte(emptyNodeConfig), fakeNodeConfig)
 	Expect(err).ShouldNot(HaveOccurred())
 })
@@ -82,9 +82,9 @@ func TestConfigMap(t *testing.T) {
 var _ = Describe("NodeConfig", func() {
 	Context("New() should", func() {
 		It("create new NodeConfig with given data", func() {
-			current := &v1alpha1.NodeConfig{Status: v1alpha1.NodeConfigStatus{ConfigStatus: StatusProvisioned}}
-			backup := &v1alpha1.NodeConfig{}
-			invalid := &v1alpha1.NodeConfig{}
+			current := &v1alpha1.NodeNetworkConfig{Status: v1alpha1.NodeNetworkConfigStatus{ConfigStatus: StatusProvisioned}}
+			backup := &v1alpha1.NodeNetworkConfig{}
+			invalid := &v1alpha1.NodeNetworkConfig{}
 			config := New(testConfigName, current, backup, invalid)
 			Expect(config).ToNot(BeNil())
 			Expect(config.current).To(Equal(current))
@@ -213,7 +213,7 @@ var _ = Describe("NodeConfig", func() {
 	})
 })
 
-func createClient(nodeConfigs *v1alpha1.NodeConfigList) client.Client {
+func createClient(nodeConfigs *v1alpha1.NodeNetworkConfigList) client.Client {
 	s := runtime.NewScheme()
 	err := corev1.AddToScheme(s)
 	Expect(err).ToNot(HaveOccurred())

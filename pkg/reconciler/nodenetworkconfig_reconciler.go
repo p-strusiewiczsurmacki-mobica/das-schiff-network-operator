@@ -29,7 +29,7 @@ const (
 	nodeConfigFilePerm    = 0o600
 )
 
-type Reconciler struct {
+type NodeNetworkConfigReconciler struct {
 	client         client.Client
 	netlinkManager *nl.Manager
 	frrManager     *frr.Manager
@@ -37,7 +37,7 @@ type Reconciler struct {
 	config         *config.Config
 	logger         logr.Logger
 	healthChecker  *healthcheck.HealthChecker
-	nodeConfig     *v1alpha1.NodeConfig
+	nodeConfig     *v1alpha1.NodeNetworkConfig
 	nodeConfigPath string
 
 	debouncer *debounce.Debouncer
@@ -45,13 +45,13 @@ type Reconciler struct {
 	dirtyFRRConfig bool
 }
 
-type reconcile struct {
-	*Reconciler
+type reconcileNodeNetworkConfig struct {
+	*NodeNetworkConfigReconciler
 	logr.Logger
 }
 
-func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeConfigPath string) (*Reconciler, error) {
-	reconciler := &Reconciler{
+func NewNodeNetworkConfigReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeConfigPath string) (*NodeNetworkConfigReconciler, error) {
+	reconciler := &NodeNetworkConfigReconciler{
 		client:         clusterClient,
 		netlinkManager: nl.NewManager(&nl.Toolkit{}),
 		frrManager:     frr.NewFRRManager(),
@@ -96,14 +96,14 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 	return reconciler, nil
 }
 
-func (reconciler *Reconciler) Reconcile(ctx context.Context) {
+func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) {
 	reconciler.debouncer.Debounce(ctx)
 }
 
-func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
-	r := &reconcile{
-		Reconciler: reconciler,
-		Logger:     reconciler.logger,
+func (reconciler *NodeNetworkConfigReconciler) reconcileDebounced(ctx context.Context) error {
+	r := &reconcileNodeNetworkConfig{
+		NodeNetworkConfigReconciler: reconciler,
+		Logger:                      reconciler.logger,
 	}
 
 	if err := r.config.ReloadConfig(); err != nil {
@@ -160,7 +160,7 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (r *reconcile) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeConfig) error {
+func (r *reconcileNodeNetworkConfig) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
 	cfg.Status.ConfigStatus = nodeconfig.StatusInvalid
 	if err := r.client.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
@@ -174,7 +174,7 @@ func (r *reconcile) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.Node
 	return nil
 }
 
-func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
+func doReconciliation(r *reconcileNodeNetworkConfig, nodeCfg *v1alpha1.NodeNetworkConfig) error {
 	r.logger.Info("config to reconcile", "NodeConfig", *nodeCfg)
 	l3vnis := nodeCfg.Spec.Vrf
 	l2vnis := nodeCfg.Spec.Layer2
@@ -190,7 +190,7 @@ func doReconciliation(r *reconcile, nodeCfg *v1alpha1.NodeConfig) error {
 	return nil
 }
 
-func (r *reconcile) restoreNodeConfig() error {
+func (r *reconcileNodeNetworkConfig) restoreNodeConfig() error {
 	if r.nodeConfig == nil {
 		return nil
 	}
@@ -203,13 +203,13 @@ func (r *reconcile) restoreNodeConfig() error {
 	return nil
 }
 
-func readNodeConfig(path string) (*v1alpha1.NodeConfig, error) {
+func readNodeConfig(path string) (*v1alpha1.NodeNetworkConfig, error) {
 	cfg, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading NodeConfig: %w", err)
 	}
 
-	nodeConfig := &v1alpha1.NodeConfig{}
+	nodeConfig := &v1alpha1.NodeNetworkConfig{}
 	if err := json.Unmarshal(cfg, nodeConfig); err != nil {
 		return nil, fmt.Errorf("error unmarshalling NodeConfig: %w", err)
 	}
@@ -217,7 +217,7 @@ func readNodeConfig(path string) (*v1alpha1.NodeConfig, error) {
 	return nodeConfig, nil
 }
 
-func storeNodeConfig(cfg *v1alpha1.NodeConfig, path string) error {
+func storeNodeConfig(cfg *v1alpha1.NodeNetworkConfig, path string) error {
 	// save working config
 	c, err := json.MarshalIndent(*cfg, "", " ")
 	if err != nil {
@@ -231,7 +231,7 @@ func storeNodeConfig(cfg *v1alpha1.NodeConfig, path string) error {
 	return nil
 }
 
-func (reconciler *Reconciler) checkHealth(ctx context.Context) error {
+func (reconciler *NodeNetworkConfigReconciler) checkHealth(ctx context.Context) error {
 	_, err := reconciler.healthChecker.IsFRRActive()
 	if err != nil {
 		return fmt.Errorf("error checking FRR status: %w", err)

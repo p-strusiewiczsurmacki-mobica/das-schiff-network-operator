@@ -84,7 +84,7 @@ var _ = Describe("ConfigManager", func() {
 			cm.configsMap = cmi
 
 			nrm.EXPECT().GetNodes().Return(map[string]*corev1.Node{nodeName: {ObjectMeta: metav1.ObjectMeta{Name: nodeName}}})
-			crm.EXPECT().CreateConfigForNode(gomock.Any(), gomock.Any()).Return(&v1alpha1.NodeConfig{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}, nil)
+			crm.EXPECT().CreateConfigForNode(gomock.Any(), gomock.Any()).Return(&v1alpha1.NodeNetworkConfig{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}, nil)
 			cmi.EXPECT().Get(gomock.Any()).Return(nil, fmt.Errorf("error gettting config %s", nodeName))
 
 			errCh := make(chan error)

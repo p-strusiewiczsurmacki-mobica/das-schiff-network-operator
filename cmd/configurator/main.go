@@ -101,29 +101,20 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeConfigReconciler, error) {
 	timoutVal, err := time.ParseDuration(timeout)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
 	}
 
-	cmInfo := make(chan bool)
-	nodeDelInfo := make(chan []string)
-
-	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal, cmInfo)
+	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), timoutVal, cmInfo, nodeDelInfo)
+	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
-	}
-
-	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, limit, cmInfo, nodeDelInfo)
-
-	if err := mgr.Add(newOnLeaderElectionEvent(cm)); err != nil {
-		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
 	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
@@ -153,12 +144,20 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 	if err = (&controllers.NodeReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
-		Reconciler: nr,
+		Reconciler: ncr,
 	}).SetupWithManager(mgr); err != nil {
 		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
-	return cr, nr, nil
+	if err = (&controllers.NetworkConfigRevisionReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: ncr,
+	}).SetupWithManager(mgr); err != nil {
+		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+	}
+
+	return cr, ncr, nil
 }
 
 func setMangerOptions(configFile string) (*manager.Options, error) {

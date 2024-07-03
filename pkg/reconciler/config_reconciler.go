@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -13,7 +12,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -26,18 +24,16 @@ const (
 
 //go:generate mockgen -destination ./mock/mock_config_reconciler.go . ConfigReconcilerInterface
 type ConfigReconcilerInterface interface {
-	CreateConfigForNode(string, *corev1.Node) (*v1alpha1.NodeConfig, error)
+	CreateConfigForNode(string, *corev1.Node) (*v1alpha1.NodeNetworkConfig, error)
 }
 
 // ConfigReconciler is responsible for creating NodeConfig objects.
 type ConfigReconciler struct {
-	globalCfg *v1alpha1.NodeConfig
+	globalCfg *v1alpha1.NodeNetworkConfig
 	logger    logr.Logger
 	debouncer *debounce.Debouncer
 	client    client.Client
 	timeout   time.Duration
-
-	configManagerInform chan bool
 }
 
 type reconcileConfig struct {
@@ -51,12 +47,11 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration, cmInfo chan bool) (*ConfigReconciler, error) {
+func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration) (*ConfigReconciler, error) {
 	reconciler := &ConfigReconciler{
-		logger:              logger,
-		timeout:             timeout,
-		client:              clusterClient,
-		configManagerInform: cmInfo,
+		logger:  logger,
+		timeout: timeout,
+		client:  clusterClient,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -75,58 +70,84 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
 
+	// get VRFRouteConfiguration, Layer2networkConfiguration and RoutingTable objects
 	globalCfg, err := r.fetchConfigData(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("error fetching configuration details: %w", err)
 	}
 
+	// prepare new revision
 	revision, err := v1alpha1.NewRevision(globalCfg)
 
 	if err != nil {
 		return fmt.Errorf("error preparing new config revision: %w", err)
 	}
 
-	revisions := &v1alpha1.NodeConfigRevisionList{}
+	cr.logger.Info("new revision", "data", revision)
 
-	cr.client.List(timeoutCtx, revisions, &client.ListOptions{})
+	revisions, err := ListRevisions(timeoutCtx, cr.client)
+	if err != nil {
+		return fmt.Errorf("error listing revisions: %w", err)
+	}
 
-	slices.SortFunc(revisions.Items, func(a, b v1alpha1.NodeConfigRevision) int {
-		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time) * -1 // reverse result
-	})
-
-	if revision.Spec.Hash == revisions.Items[0].Spec.Hash {
+	if revision.Spec.Revision == revisions.Items[0].Spec.Revision {
 		// new revision equals to the last one - skip
 		return nil
 	}
 
 	for _, r := range revisions.Items {
 		cr.logger.Info("revision", "data", r)
-		if revision.Spec.Hash == r.Spec.Hash && r.Status.IsInvalid {
+		if revision.Spec.Revision == r.Spec.Revision && r.Status.IsInvalid {
 			// new revision is equal to known invalid revision
 			return nil
 		}
 	}
 
+	// create revision object
 	if err := cr.client.Create(timeoutCtx, revision); err != nil {
 		return fmt.Errorf("error creating new NodeConfigRevision: %w", err)
 	}
 
-	if err := cr.client.Status().Update(timeoutCtx, revision); err != nil {
-		return fmt.Errorf("error setting revision status: %w", err)
-	}
+	// // wait for revision object creation
+	// if err := cr.waitForObject(timeoutCtx, revision, defaultSleep); err != nil {
+	// 	return fmt.Errorf("error while waiting for revision: %w", err)
+	// }
+
+	// // create update revision object status (valid)
+	// if err := cr.client.Status().Update(timeoutCtx, revision); err != nil {
+	// 	return fmt.Errorf("error setting revision status: %w", err)
+	// }
 
 	cr.logger.Info("global config updated", "config", *cr.globalCfg)
 	return nil
 }
 
-func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeConfig, error) {
+// func (cr *ConfigReconciler) waitForObject(ctx context.Context, revision client.Object, sleepTime time.Duration) error {
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			return fmt.Errorf("context done: %w", ctx.Err())
+// 		default:
+// 			var r client.Object
+// 			err := cr.client.Get(ctx, client.ObjectKeyFromObject(revision), r)
+// 			if err != nil && !apierrors.IsNotFound(err) {
+// 				return fmt.Errorf("error getting revision: %w", err)
+// 			} else if err == nil {
+// 				return nil
+// 			}
+// 			time.Sleep(sleepTime)
+// 		}
+// 	}
+// }
+
+func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeNetworkConfig, error) {
 	// get VRFRouteConfiguration objects
 	l3vnis, err := r.fetchLayer3(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// get Layer2networkConfigurationObjects objects
+	// get Layer2networkConfiguration objects
 	l2vnis, err := r.fetchLayer2(ctx)
 	if err != nil {
 		return nil, err
@@ -138,7 +159,7 @@ func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeCo
 		return nil, err
 	}
 
-	config := &v1alpha1.NodeConfig{}
+	config := &v1alpha1.NodeNetworkConfig{}
 
 	// discard metadata from previously fetched objects
 	config.Spec.Layer2 = []v1alpha1.Layer2NetworkConfigurationSpec{}
@@ -159,9 +180,9 @@ func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeCo
 	return config, nil
 }
 
-func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) (*v1alpha1.NodeConfig, error) {
+func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) (*v1alpha1.NodeNetworkConfig, error) {
 	// create new config
-	c := &v1alpha1.NodeConfig{
+	c := &v1alpha1.NodeNetworkConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -171,7 +192,7 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 		cr.globalCfg = v1alpha1.NewEmptyConfig(name)
 	}
 
-	v1alpha1.CopyNodeConfig(cr.globalCfg, c, name)
+	v1alpha1.CopyNodeNetworkConfig(cr.globalCfg, c, name)
 
 	err := controllerutil.SetOwnerReference(node, c, scheme.Scheme)
 	if err != nil {
@@ -209,27 +230,41 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 	return c, nil
 }
 
-func convertSelector(matchLabels map[string]string, matchExpressions []metav1.LabelSelectorRequirement) (labels.Selector, error) {
-	selector := labels.NewSelector()
-	var reqs labels.Requirements
+// func convertSelector(matchLabels map[string]string, matchExpressions []metav1.LabelSelectorRequirement) (labels.Selector, error) {
+// 	selector := labels.NewSelector()
+// 	var reqs labels.Requirements
 
-	for key, value := range matchLabels {
-		requirement, err := labels.NewRequirement(key, selection.Equals, []string{value})
-		if err != nil {
-			return nil, fmt.Errorf("error creating MatchLabel requirement: %w", err)
-		}
-		reqs = append(reqs, *requirement)
+// 	for key, value := range matchLabels {
+// 		requirement, err := labels.NewRequirement(key, selection.Equals, []string{value})
+// 		if err != nil {
+// 			return nil, fmt.Errorf("error creating MatchLabel requirement: %w", err)
+// 		}
+// 		reqs = append(reqs, *requirement)
+// 	}
+
+// 	for _, req := range matchExpressions {
+// 		lowercaseOperator := selection.Operator(strings.ToLower(string(req.Operator)))
+// 		requirement, err := labels.NewRequirement(req.Key, lowercaseOperator, req.Values)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("error creating MatchExpression requirement: %w", err)
+// 		}
+// 		reqs = append(reqs, *requirement)
+// 	}
+// 	selector = selector.Add(reqs...)
+
+// 	return selector, nil
+// }
+
+func ListRevisions(ctx context.Context, c client.Client) (*v1alpha1.NetworkConfigRevisionList, error) {
+	revisions := &v1alpha1.NetworkConfigRevisionList{}
+	if err := c.List(ctx, revisions); err != nil {
+		return nil, fmt.Errorf("error listing revisions: %w", err)
 	}
 
-	for _, req := range matchExpressions {
-		lowercaseOperator := selection.Operator(strings.ToLower(string(req.Operator)))
-		requirement, err := labels.NewRequirement(req.Key, lowercaseOperator, req.Values)
-		if err != nil {
-			return nil, fmt.Errorf("error creating MatchExpression requirement: %w", err)
-		}
-		reqs = append(reqs, *requirement)
-	}
-	selector = selector.Add(reqs...)
+	// sort revisions by creation date ascending (newest first)
+	slices.SortFunc(revisions.Items, func(a, b v1alpha1.NetworkConfigRevision) int {
+		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time) * -1 // reverse result
+	})
 
-	return selector, nil
+	return revisions, nil
 }

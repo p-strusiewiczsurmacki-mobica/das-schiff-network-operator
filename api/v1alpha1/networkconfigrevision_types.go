@@ -25,44 +25,43 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// NodeConfigSpec defines the desired state of NodeConfig.
-type NodeConfigRevisionSpec struct {
-	Revision string
-	Config   NodeConfig
-	Hash     string
+// NetworkConfigSpec defines the desired state of NetworkConfig.
+type NetworkConfigRevisionSpec struct {
+	Config   NodeNetworkConfig `json:"config"`
+	Revision string            `json:"revision"`
 }
 
-type NodeConfigRevisionStatus struct {
-	IsInvalid bool
+type NetworkConfigRevisionStatus struct {
+	IsInvalid bool `json:"isInvalid"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:shortName=ncr,scope=Cluster
+//+kubebuilder:resource:shortName=nncr,scope=Cluster
 
-// NodeConfig is the Schema for the node configuration.
-type NodeConfigRevision struct {
+// NetworkConfig is the Schema for the node configuration.
+type NetworkConfigRevision struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   NodeConfigRevisionSpec   `json:"spec,omitempty"`
-	Status NodeConfigRevisionStatus `json:"status,omitempty"`
+	Spec   NetworkConfigRevisionSpec   `json:"spec,omitempty"`
+	Status NetworkConfigRevisionStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// NodeConfigList contains a list of NodeConfig.
-type NodeConfigRevisionList struct {
+// NetworkConfigList contains a list of NetworkConfig.
+type NetworkConfigRevisionList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []NodeConfigRevision `json:"items"`
+	Items           []NetworkConfigRevision `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&NodeConfig{}, &NodeConfigList{})
+	SchemeBuilder.Register(&NetworkConfigRevision{}, &NetworkConfigRevision{})
 }
 
-func NewRevision(config *NodeConfig) (*NodeConfigRevision, error) {
+func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 	data, err := json.Marshal(config.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("error marshalling data: %w", err)
@@ -73,13 +72,13 @@ func NewRevision(config *NodeConfig) (*NodeConfigRevision, error) {
 	hash := h.Sum(nil)
 	hashHex := hex.EncodeToString(hash)
 
-	return &NodeConfigRevision{
+	return &NetworkConfigRevision{
 		ObjectMeta: metav1.ObjectMeta{Name: hashHex[:10]},
-		Spec: NodeConfigRevisionSpec{
-			Config: *config,
-			Hash:   hashHex,
+		Spec: NetworkConfigRevisionSpec{
+			Config:   *config,
+			Revision: hashHex,
 		},
-		Status: NodeConfigRevisionStatus{
+		Status: NetworkConfigRevisionStatus{
 			IsInvalid: false,
 		},
 	}, nil

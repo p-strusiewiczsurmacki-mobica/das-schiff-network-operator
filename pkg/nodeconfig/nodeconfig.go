@@ -24,15 +24,15 @@ type ConfigInterface interface {
 	GetActive() bool
 	GetCancelFunc() *context.CancelFunc
 	GetDeployed() bool
-	GetInvalid() *v1alpha1.NodeConfig
-	GetCurrent() *v1alpha1.NodeConfig
+	GetInvalid() *v1alpha1.NodeNetworkConfig
+	GetCurrent() *v1alpha1.NodeNetworkConfig
 	GetName() string
-	GetNext() *v1alpha1.NodeConfig
+	GetNext() *v1alpha1.NodeNetworkConfig
 	SetActive(value bool)
 	SetBackupAsNext() bool
 	SetCancelFunc(f *context.CancelFunc)
 	SetDeployed(value bool)
-	UpdateNext(next *v1alpha1.NodeConfig)
+	UpdateNext(next *v1alpha1.NodeNetworkConfig)
 }
 
 const (
@@ -52,10 +52,10 @@ const (
 
 type Config struct {
 	name       string
-	current    *v1alpha1.NodeConfig
-	next       *v1alpha1.NodeConfig
-	backup     *v1alpha1.NodeConfig
-	invalid    *v1alpha1.NodeConfig
+	current    *v1alpha1.NodeNetworkConfig
+	next       *v1alpha1.NodeNetworkConfig
+	backup     *v1alpha1.NodeNetworkConfig
+	invalid    *v1alpha1.NodeNetworkConfig
 	mtx        sync.RWMutex
 	active     atomic.Bool
 	deployed   atomic.Bool
@@ -64,7 +64,7 @@ type Config struct {
 
 type contextKey string
 
-func New(name string, current, backup, invalid *v1alpha1.NodeConfig) *Config {
+func New(name string, current, backup, invalid *v1alpha1.NodeNetworkConfig) *Config {
 	nc := NewEmpty(name)
 	nc.current = current
 	nc.backup = backup
@@ -115,31 +115,31 @@ func (nc *Config) GetDeployed() bool {
 	return nc.deployed.Load()
 }
 
-func (nc *Config) GetNext() *v1alpha1.NodeConfig {
+func (nc *Config) GetNext() *v1alpha1.NodeNetworkConfig {
 	nc.mtx.RLock()
 	defer nc.mtx.RUnlock()
 	return nc.next
 }
 
-func (nc *Config) GetInvalid() *v1alpha1.NodeConfig {
+func (nc *Config) GetInvalid() *v1alpha1.NodeNetworkConfig {
 	nc.mtx.RLock()
 	defer nc.mtx.RUnlock()
 	return nc.invalid
 }
 
-func (nc *Config) GetCurrent() *v1alpha1.NodeConfig {
+func (nc *Config) GetCurrent() *v1alpha1.NodeNetworkConfig {
 	nc.mtx.RLock()
 	defer nc.mtx.RUnlock()
 	return nc.current
 }
 
-func (nc *Config) UpdateNext(next *v1alpha1.NodeConfig) {
+func (nc *Config) UpdateNext(next *v1alpha1.NodeNetworkConfig) {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
 	if nc.next == nil {
 		nc.next = v1alpha1.NewEmptyConfig(nc.name)
 	}
-	v1alpha1.CopyNodeConfig(next, nc.next, nc.name)
+	v1alpha1.CopyNodeNetworkConfig(next, nc.next, nc.name)
 }
 
 func (nc *Config) Deploy(ctx context.Context, c client.Client, logger logr.Logger, invalidationTimeout time.Duration) error {
@@ -208,7 +208,7 @@ func (nc *Config) deployNext(ctx context.Context, c client.Client, logger logr.L
 
 func (nc *Config) createOrUpdate(ctx context.Context, c client.Client, logger logr.Logger) (bool, error) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(nc.current), nc.current); err != nil && apierrors.IsNotFound(err) {
-		v1alpha1.CopyNodeConfig(nc.next, nc.current, nc.current.Name)
+		v1alpha1.CopyNodeNetworkConfig(nc.next, nc.current, nc.current.Name)
 		// config does not exist - create
 		if err := c.Create(ctx, nc.current); err != nil {
 			return false, fmt.Errorf("error creating NodeConfig object: %w", err)
@@ -223,14 +223,14 @@ func (nc *Config) createOrUpdate(ctx context.Context, c client.Client, logger lo
 			logger.Info("new config is equal to current config, skipping...", "config", nc.current.Name)
 			if nc.backup == nil {
 				nc.backup = v1alpha1.NewEmptyConfig(nc.name + BackupSuffix)
-				v1alpha1.CopyNodeConfig(nc.current, nc.backup, nc.name+BackupSuffix)
+				v1alpha1.CopyNodeNetworkConfig(nc.current, nc.backup, nc.name+BackupSuffix)
 				if err := nc.CreateBackup(ctx, c); err != nil {
 					return false, fmt.Errorf("error creating missing backup: %w", err)
 				}
 			}
 			return true, nil
 		}
-		v1alpha1.CopyNodeConfig(nc.next, nc.current, nc.current.Name)
+		v1alpha1.CopyNodeNetworkConfig(nc.next, nc.current, nc.current.Name)
 		if err := updateConfig(ctx, c, nc.current); err != nil {
 			return false, fmt.Errorf("error updating NodeConfig object: %w", err)
 		}
@@ -245,7 +245,7 @@ func (nc *Config) SetBackupAsNext() bool {
 		if nc.next == nil {
 			nc.next = v1alpha1.NewEmptyConfig(nc.current.Name)
 		}
-		v1alpha1.CopyNodeConfig(nc.backup, nc.next, nc.current.Name)
+		v1alpha1.CopyNodeNetworkConfig(nc.backup, nc.next, nc.current.Name)
 		return true
 	}
 	return false
@@ -265,9 +265,9 @@ func (nc *Config) CreateBackup(ctx context.Context, c client.Client) error {
 	}
 
 	if nc.current != nil {
-		v1alpha1.CopyNodeConfig(nc.current, nc.backup, backupName)
+		v1alpha1.CopyNodeNetworkConfig(nc.current, nc.backup, backupName)
 	} else {
-		v1alpha1.CopyNodeConfig(v1alpha1.NewEmptyConfig(backupName), nc.backup, backupName)
+		v1alpha1.CopyNodeNetworkConfig(v1alpha1.NewEmptyConfig(backupName), nc.backup, backupName)
 	}
 
 	if createNew {
@@ -295,7 +295,7 @@ func (nc *Config) CrateInvalid(ctx context.Context, c client.Client) error {
 	if err := c.Get(ctx, types.NamespacedName{Name: invalidName}, nc.invalid); err != nil {
 		if apierrors.IsNotFound(err) {
 			// invalid config for the node does not exist - create new
-			v1alpha1.CopyNodeConfig(nc.current, nc.invalid, invalidName)
+			v1alpha1.CopyNodeNetworkConfig(nc.current, nc.invalid, invalidName)
 			if err = c.Create(ctx, nc.invalid); err != nil {
 				return fmt.Errorf("cannot store invalid config for node %s: %w", nc.name, err)
 			}
@@ -306,7 +306,7 @@ func (nc *Config) CrateInvalid(ctx context.Context, c client.Client) error {
 	}
 
 	// invalid config for the node exist - update
-	v1alpha1.CopyNodeConfig(nc.current, nc.invalid, invalidName)
+	v1alpha1.CopyNodeNetworkConfig(nc.current, nc.invalid, invalidName)
 	if err := updateConfig(ctx, c, nc.invalid); err != nil {
 		return fmt.Errorf("error updating invalid config for node %s: %w", nc.name, err)
 	}
@@ -319,7 +319,7 @@ func (nc *Config) DeleteInvalid(ctx context.Context, c client.Client) error {
 	defer nc.mtx.Unlock()
 	invalidName := fmt.Sprintf("%s%s", nc.name, InvalidSuffix)
 
-	config := v1alpha1.NodeConfig{}
+	config := v1alpha1.NodeNetworkConfig{}
 
 	if err := c.Get(ctx, types.NamespacedName{Name: invalidName}, &config); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -343,7 +343,7 @@ func (nc *Config) DeleteInvalid(ctx context.Context, c client.Client) error {
 	return nil
 }
 
-func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig,
+func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeNetworkConfig,
 	expectedStatus string, failIfInvalid bool, logger logr.Logger, invalidate bool, invalidationTimeout time.Duration) error {
 	for {
 		select {
@@ -367,7 +367,7 @@ func (nc *Config) waitForConfig(ctx context.Context, c client.Client, config *v1
 	}
 }
 
-func (nc *Config) handleContextDone(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig,
+func (nc *Config) handleContextDone(ctx context.Context, c client.Client, config *v1alpha1.NodeNetworkConfig,
 	logger logr.Logger, invalidate bool, invalidationTimeout time.Duration) error {
 	// contex cancelled means that node was removed
 	// don't report error here
@@ -385,7 +385,7 @@ func (nc *Config) handleContextDone(ctx context.Context, c client.Client, config
 	return fmt.Errorf("context error: %w", ctx.Err())
 }
 
-func (nc *Config) apiUpdate(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig) error {
+func (nc *Config) apiUpdate(ctx context.Context, c client.Client, config *v1alpha1.NodeNetworkConfig) error {
 	nc.mtx.Lock()
 	defer nc.mtx.Unlock()
 	if err := c.Get(ctx, types.NamespacedName{Name: config.Name, Namespace: config.Namespace}, config); err != nil {
@@ -400,7 +400,7 @@ func (nc *Config) apiUpdate(ctx context.Context, c client.Client, config *v1alph
 
 // old context exceeded deadline so new config is created from the parent
 // nolint: contextcheck
-func (nc *Config) handleContextDeadline(ctx context.Context, c client.Client, invalidationTimeout time.Duration, config *v1alpha1.NodeConfig, logger logr.Logger) error {
+func (nc *Config) handleContextDeadline(ctx context.Context, c client.Client, invalidationTimeout time.Duration, config *v1alpha1.NodeNetworkConfig, logger logr.Logger) error {
 	pCtx, ok := ctx.Value(ParentCtx).(context.Context)
 	if !ok {
 		return fmt.Errorf("error getting parent context")
@@ -418,7 +418,7 @@ func (nc *Config) handleContextDeadline(ctx context.Context, c client.Client, in
 	return nil
 }
 
-func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig, status string) error {
+func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1alpha1.NodeNetworkConfig, status string) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -448,7 +448,7 @@ func (nc *Config) updateStatus(ctx context.Context, c client.Client, config *v1a
 	}
 }
 
-func updateConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeConfig) error {
+func updateConfig(ctx context.Context, c client.Client, config *v1alpha1.NodeNetworkConfig) error {
 	for {
 		select {
 		case <-ctx.Done():
