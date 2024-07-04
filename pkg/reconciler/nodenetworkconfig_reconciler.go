@@ -130,14 +130,27 @@ func (reconciler *NodeNetworkConfigReconciler) reconcileDebounced(ctx context.Co
 		return nil
 	}
 
+	if err := r.processConfig(ctx, cfg); err != nil {
+		return fmt.Errorf("error while processing config: %w", err)
+	}
+
+	// replace in-memory working config and store it on the disk
+	reconciler.nodeConfig = cfg
+	if err := storeNodeConfig(cfg, reconciler.nodeConfigPath); err != nil {
+		return fmt.Errorf("error saving NodeConfig status: %w", err)
+	}
+
+	return nil
+}
+
+func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
 	// set config status as provisioned (valid)
-	cfg.Status.ConfigStatus = StatusProvisioning
-	if err = r.client.Status().Update(ctx, cfg); err != nil {
-		return fmt.Errorf("error updating NodeConfig status: %w", err)
+	if err := r.setStatus(ctx, cfg, StatusProvisioning); err != nil {
+		return fmt.Errorf("error setting config status %s: %w", StatusProvisioning, err)
 	}
 
 	// reconcile config
-	if err = doReconciliation(r, cfg); err != nil {
+	if err := doReconciliation(r, cfg); err != nil {
 		// if reconciliation failed set NodeConfig's status as invalid and restore last known working config
 		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
 			return fmt.Errorf("reconciler restoring config: %w", err)
@@ -147,7 +160,7 @@ func (reconciler *NodeNetworkConfigReconciler) reconcileDebounced(ctx context.Co
 	}
 
 	// check if node is healthly after reconciliation
-	if err := reconciler.checkHealth(ctx); err != nil {
+	if err := r.checkHealth(ctx); err != nil {
 		// if node is not healthly set NodeConfig's status as invalid and restore last known working config
 		if err := r.invalidateAndRestore(ctx, cfg); err != nil {
 			return fmt.Errorf("reconciler restoring config: %w", err)
@@ -157,17 +170,19 @@ func (reconciler *NodeNetworkConfigReconciler) reconcileDebounced(ctx context.Co
 	}
 
 	// set config status as provisioned (valid)
-	cfg.Status.ConfigStatus = StatusProvisioned
-	if err = r.client.Status().Update(ctx, cfg); err != nil {
+	if err := r.setStatus(ctx, cfg, StatusProvisioned); err != nil {
+		return fmt.Errorf("error setting config status %s: %w", StatusProvisioned, err)
+	}
+
+	return nil
+}
+
+func (r *reconcileNodeNetworkConfig) setStatus(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig, status string) error {
+	// set config status as provisioned (valid)
+	cfg.Status.ConfigStatus = status
+	if err := r.client.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
-
-	// replace in-memory working config and store it on the disk
-	reconciler.nodeConfig = cfg
-	if err = storeNodeConfig(cfg, reconciler.nodeConfigPath); err != nil {
-		return fmt.Errorf("error saving NodeConfig status: %w", err)
-	}
-
 	return nil
 }
 

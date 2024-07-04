@@ -95,9 +95,9 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return nil
 	}
 
-	for _, r := range revisions.Items {
+	for i := range revisions.Items {
 		cr.logger.Info("revision", "data", r)
-		if revision.Spec.Revision == r.Spec.Revision && r.Status.IsInvalid {
+		if revision.Spec.Revision == revisions.Items[i].Spec.Revision && revisions.Items[i].Status.IsInvalid {
 			// new revision is equal to known invalid revision
 			return nil
 		}
@@ -108,37 +108,9 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error creating new NodeConfigRevision: %w", err)
 	}
 
-	// // wait for revision object creation
-	// if err := cr.waitForObject(timeoutCtx, revision, defaultSleep); err != nil {
-	// 	return fmt.Errorf("error while waiting for revision: %w", err)
-	// }
-
-	// // create update revision object status (valid)
-	// if err := cr.client.Status().Update(timeoutCtx, revision); err != nil {
-	// 	return fmt.Errorf("error setting revision status: %w", err)
-	// }
-
 	cr.logger.Info("global config updated", "config", *cr.globalCfg)
 	return nil
 }
-
-// func (cr *ConfigReconciler) waitForObject(ctx context.Context, revision client.Object, sleepTime time.Duration) error {
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			return fmt.Errorf("context done: %w", ctx.Err())
-// 		default:
-// 			var r client.Object
-// 			err := cr.client.Get(ctx, client.ObjectKeyFromObject(revision), r)
-// 			if err != nil && !apierrors.IsNotFound(err) {
-// 				return fmt.Errorf("error getting revision: %w", err)
-// 			} else if err == nil {
-// 				return nil
-// 			}
-// 			time.Sleep(sleepTime)
-// 		}
-// 	}
-// }
 
 func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeNetworkConfig, error) {
 	// get VRFRouteConfiguration objects
@@ -229,31 +201,6 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 	// set config as next config for the node
 	return c, nil
 }
-
-// func convertSelector(matchLabels map[string]string, matchExpressions []metav1.LabelSelectorRequirement) (labels.Selector, error) {
-// 	selector := labels.NewSelector()
-// 	var reqs labels.Requirements
-
-// 	for key, value := range matchLabels {
-// 		requirement, err := labels.NewRequirement(key, selection.Equals, []string{value})
-// 		if err != nil {
-// 			return nil, fmt.Errorf("error creating MatchLabel requirement: %w", err)
-// 		}
-// 		reqs = append(reqs, *requirement)
-// 	}
-
-// 	for _, req := range matchExpressions {
-// 		lowercaseOperator := selection.Operator(strings.ToLower(string(req.Operator)))
-// 		requirement, err := labels.NewRequirement(req.Key, lowercaseOperator, req.Values)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("error creating MatchExpression requirement: %w", err)
-// 		}
-// 		reqs = append(reqs, *requirement)
-// 	}
-// 	selector = selector.Add(reqs...)
-
-// 	return selector, nil
-// }
 
 func ListRevisions(ctx context.Context, c client.Client) (*v1alpha1.NetworkConfigRevisionList, error) {
 	revisions := &v1alpha1.NetworkConfigRevisionList{}

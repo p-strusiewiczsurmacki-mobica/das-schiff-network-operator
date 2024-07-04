@@ -40,11 +40,6 @@ type NodeConfigReconciler struct {
 	timeout   time.Duration
 }
 
-type reconcileNodeConfig struct {
-	*NodeConfigReconciler
-	logr.Logger
-}
-
 // Reconcile starts reconciliation.
 func (ncr *NodeConfigReconciler) Reconcile(ctx context.Context) {
 	ncr.debouncer.Debounce(ctx)
@@ -84,8 +79,16 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error lisiting nodes: %w", err)
 	}
 
+	if err := ncr.deployNodeConfigs(ctx, nodes, revisionToDeploy); err != nil {
+		return fmt.Errorf("error deploying node configurations: %w", err)
+	}
+
+	return nil
+}
+
+func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes map[string]*corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
 	for _, node := range nodes {
-		newConfig, err := ncr.createConfigForNode(node, revisionToDeploy)
+		newConfig, err := createConfigForNode(node, revision)
 		if err != nil {
 			return fmt.Errorf("error preparing config for node %s: %w", node.Name, err)
 		}
@@ -93,20 +96,19 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		if err := ncr.client.Get(ctx, types.NamespacedName{Name: node.Name}, currentConfig); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("error getting NodeNetworkConfig object for node %s: %w", node.Name, err)
-			} else {
-				currentConfig = nil
 			}
+			currentConfig = nil
 		}
-		if currentConfig != nil && currentConfig.Spec.Revision == revisionToDeploy.Spec.Revision {
+		if currentConfig != nil && currentConfig.Spec.Revision == revision.Spec.Revision {
 			// current config is the same as current revision - skip
 			continue
 		}
 		if err := ncr.deployConfig(ctx, newConfig, currentConfig, node); err != nil {
 			if errors.Is(err, InvalidConfigError) || errors.Is(err, context.DeadlineExceeded) {
 				// revision results in invalid config or in context timout - invalidate revision
-				revisionToDeploy.Status.IsInvalid = true
-				if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
-					return fmt.Errorf("error invalidating revision %s: %w", revisionToDeploy.Name, err)
+				revision.Status.IsInvalid = true
+				if err := ncr.client.Status().Update(ctx, revision); err != nil {
+					return fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
 				}
 			}
 			return fmt.Errorf("error deploying config for node %s: %w", node.Name, err)
@@ -115,7 +117,7 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	return nil
 }
 
-func (ncr *NodeConfigReconciler) createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevision) (*v1alpha1.NodeNetworkConfig, error) {
+func createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevision) (*v1alpha1.NodeNetworkConfig, error) {
 	// create new config
 	c := &v1alpha1.NodeNetworkConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -250,9 +252,9 @@ func (e *ConfigError) Error() string {
 	return e.Message
 }
 
-func (e *ConfigError) Is(target error) bool {
+func (*ConfigError) Is(target error) bool {
 	_, ok := target.(*ConfigError)
 	return ok
 }
 
-var InvalidConfigError *ConfigError = &ConfigError{Message: "invalid config"}
+var InvalidConfigError = &ConfigError{Message: "invalid config"}

@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -67,8 +67,10 @@ func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 		return nil, fmt.Errorf("error marshalling data: %w", err)
 	}
 
-	h := md5.New()
-	h.Write(data)
+	h := sha256.New()
+	if _, err := h.Write(data); err != nil {
+		return nil, fmt.Errorf("error writing MD5 data: %w", err)
+	}
 	hash := h.Sum(nil)
 	hashHex := hex.EncodeToString(hash)
 

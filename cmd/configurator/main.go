@@ -18,7 +18,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -30,7 +29,6 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	configmanager "github.com/telekom/das-schiff-network-operator/pkg/config_manager"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 
@@ -182,44 +180,4 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	options.MetricsBindAddress = "0"
 
 	return &options, nil
-}
-
-type onLeaderElectionEvent struct {
-	cm *configmanager.ConfigManager
-}
-
-func newOnLeaderElectionEvent(cm *configmanager.ConfigManager) *onLeaderElectionEvent {
-	return &onLeaderElectionEvent{
-		cm: cm,
-	}
-}
-
-func (*onLeaderElectionEvent) NeedLeaderElection() bool {
-	return true
-}
-
-func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
-	setupLog.Info("onLeaderElectionEvent started")
-	if err := e.cm.DirtyStartup(ctx); err != nil {
-		return fmt.Errorf("error while checking previous leader work: %w", err)
-	}
-
-	watchNodesErr := make(chan error)
-	watchConfigsErr := make(chan error)
-	leCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go e.cm.WatchDeletedNodes(leCtx, watchNodesErr)
-	go e.cm.WatchConfigs(leCtx, watchConfigsErr)
-
-	select {
-	case <-leCtx.Done():
-		if err := leCtx.Err(); err != nil {
-			return fmt.Errorf("onLeaderElection context error: %w", leCtx.Err())
-		}
-		return nil
-	case err := <-watchNodesErr:
-		return fmt.Errorf("node watcher error: %w", err)
-	case err := <-watchConfigsErr:
-		return fmt.Errorf("config watcher error: %w", err)
-	}
 }
