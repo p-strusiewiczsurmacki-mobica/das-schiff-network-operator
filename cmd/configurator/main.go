@@ -88,7 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _, err = setupReconcilers(mgr, timeout, limit)
+	_, _, err = setupReconcilers(mgr, timeout)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
@@ -101,7 +101,7 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeConfigReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string) (*reconciler.ConfigReconciler, *reconciler.NodeConfigReconciler, error) {
 	timoutVal, err := time.ParseDuration(timeout)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)

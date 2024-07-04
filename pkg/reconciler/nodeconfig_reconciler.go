@@ -46,8 +46,8 @@ type reconcileNodeConfig struct {
 }
 
 // Reconcile starts reconciliation.
-func (cr *NodeConfigReconciler) Reconcile(ctx context.Context) {
-	cr.debouncer.Debounce(ctx)
+func (ncr *NodeConfigReconciler) Reconcile(ctx context.Context) {
+	ncr.debouncer.Debounce(ctx)
 }
 
 // // NewNodeConfigReconciler creates new reconciler that creates NodeConfig objects.
@@ -201,7 +201,7 @@ func (ncr *NodeConfigReconciler) deployConfig(ctx context.Context, newConfig, cu
 		}
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Second*60)
+	timeoutCtx, cancel := context.WithTimeout(ctx, ncr.timeout)
 	defer cancel()
 
 	// wait for agent to set status to 'provisioning'
