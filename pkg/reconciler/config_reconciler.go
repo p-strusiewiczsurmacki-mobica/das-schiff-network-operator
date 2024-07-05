@@ -85,7 +85,7 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 
 	cr.logger.Info("new revision", "data", revision)
 
-	revisions, err := ListRevisions(timeoutCtx, cr.client)
+	revisions, err := listRevisions(timeoutCtx, cr.client)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
@@ -152,7 +152,7 @@ func (r *reconcileConfig) fetchConfigData(ctx context.Context) (*v1alpha1.NodeNe
 	return config, nil
 }
 
-func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) (*v1alpha1.NodeNetworkConfig, error) {
+func (cr *ConfigReconciler) createConfigForNode(name string, node *corev1.Node) (*v1alpha1.NodeNetworkConfig, error) {
 	// create new config
 	c := &v1alpha1.NodeNetworkConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -202,7 +202,7 @@ func (cr *ConfigReconciler) CreateConfigForNode(name string, node *corev1.Node) 
 	return c, nil
 }
 
-func ListRevisions(ctx context.Context, c client.Client) (*v1alpha1.NetworkConfigRevisionList, error) {
+func listRevisions(ctx context.Context, c client.Client) (*v1alpha1.NetworkConfigRevisionList, error) {
 	revisions := &v1alpha1.NetworkConfigRevisionList{}
 	if err := c.List(ctx, revisions); err != nil {
 		return nil, fmt.Errorf("error listing revisions: %w", err)

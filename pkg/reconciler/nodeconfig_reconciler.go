@@ -25,6 +25,8 @@ const (
 	StatusInvalid      = "invalid"
 	StatusProvisioning = "provisioning"
 	StatusProvisioned  = "provisioned"
+
+	controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 )
 
 //go:generate mockgen -destination ./mock/mock_config_reconciler.go . NodeConfigReconcilerInterface
@@ -59,7 +61,7 @@ func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, ti
 }
 
 func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
-	revisions, err := ListRevisions(ctx, ncr.client)
+	revisions, err := listRevisions(ctx, ncr.client)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
@@ -73,7 +75,7 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		break
 	}
 
-	nodes, err := ListNodes(ctx, ncr.client)
+	nodes, err := listNodes(ctx, ncr.client)
 
 	if err != nil {
 		return fmt.Errorf("error lisiting nodes: %w", err)
@@ -242,6 +244,33 @@ func (ncr *NodeConfigReconciler) waitForConfig(ctx context.Context, config *v1al
 			}
 		}
 	}
+}
+
+func listNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {
+	// list all nodes
+	list := &corev1.NodeList{}
+	if err := c.List(ctx, list); err != nil {
+		return nil, fmt.Errorf("unable to list nodes: %w", err)
+	}
+
+	// discard control-plane nodes and create map of nodes
+	nodes := make(map[string]*corev1.Node)
+	for i := range list.Items {
+		_, isControlPlane := list.Items[i].Labels[controlPlaneLabel]
+		if !isControlPlane {
+			// discard nodes that are not in ready state
+			for j := range list.Items[i].Status.Conditions {
+				// TODO: Should taint node.kubernetes.io/not-ready be used instead of Conditions?
+				if list.Items[i].Status.Conditions[j].Type == corev1.NodeReady &&
+					list.Items[i].Status.Conditions[j].Status == corev1.ConditionTrue {
+					nodes[list.Items[i].Name] = &list.Items[i]
+					break
+				}
+			}
+		}
+	}
+
+	return nodes, nil
 }
 
 type ConfigError struct {

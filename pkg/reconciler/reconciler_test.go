@@ -45,7 +45,7 @@ var _ = Describe("ConfigReconciler", func() {
 				},
 			}
 
-			cfg, err := r.CreateConfigForNode("node", &corev1.Node{
+			cfg, err := r.createConfigForNode("node", &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   "node",
 					Labels: map[string]string{"app": "test"},
