@@ -27,8 +27,8 @@ import (
 
 // NetworkConfigSpec defines the desired state of NetworkConfig.
 type NetworkConfigRevisionSpec struct {
-	Config   NodeNetworkConfig `json:"config"`
-	Revision string            `json:"revision"`
+	Config   NodeNetworkConfigSpec `json:"config"`
+	Revision string                `json:"revision"`
 }
 
 type NetworkConfigRevisionStatus struct {
@@ -37,7 +37,9 @@ type NetworkConfigRevisionStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:shortName=nncr,scope=Cluster
+//+kubebuilder:resource:shortName=ncr,scope=Cluster
+//+kubebuilder:printcolumn:name="Invalid",type=string,JSONPath=`.status.isInvalid`
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // NetworkConfig is the Schema for the node configuration.
 type NetworkConfigRevision struct {
@@ -58,7 +60,7 @@ type NetworkConfigRevisionList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&NetworkConfigRevision{}, &NetworkConfigRevision{})
+	SchemeBuilder.Register(&NetworkConfigRevision{}, &NetworkConfigRevisionList{})
 }
 
 func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
@@ -77,7 +79,7 @@ func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 	return &NetworkConfigRevision{
 		ObjectMeta: metav1.ObjectMeta{Name: hashHex[:10]},
 		Spec: NetworkConfigRevisionSpec{
-			Config:   *config,
+			Config:   config.Spec,
 			Revision: hashHex,
 		},
 		Status: NetworkConfigRevisionStatus{

@@ -61,18 +61,23 @@ func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, ti
 }
 
 func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
-	revisions, err := listRevisions(ctx, ncr.client)
+	revisions, err := listRevisions(ctx, ncr.client, ncr.logger)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
 
-	revisionToDeploy := &v1alpha1.NetworkConfigRevision{}
+	var revisionToDeploy *v1alpha1.NetworkConfigRevision
 	for i := range revisions.Items {
 		if revisions.Items[i].Status.IsInvalid {
 			continue
 		}
 		revisionToDeploy = &revisions.Items[i]
 		break
+	}
+
+	// there is nothing to deploy - skip
+	if revisionToDeploy == nil {
+		return nil
 	}
 
 	nodes, err := listNodes(ctx, ncr.client)
@@ -83,6 +88,11 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 
 	if err := ncr.deployNodeConfigs(ctx, nodes, revisionToDeploy); err != nil {
 		return fmt.Errorf("error deploying node configurations: %w", err)
+	}
+
+	revisionToDeploy.Status.IsInvalid = false
+	if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
+		return fmt.Errorf("error invalidating revision %s: %w", revisionToDeploy.Name, err)
 	}
 
 	return nil
@@ -127,8 +137,9 @@ func createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevi
 		},
 	}
 
-	v1alpha1.CopyNodeNetworkConfig(&revision.Spec.Config, c, node.Name)
+	v1alpha1.CopyNodeNetworkConfigSpec(&revision.Spec.Config, &c.Spec)
 	c.Spec.Revision = revision.Spec.Revision
+	c.Name = node.Name
 
 	err := controllerutil.SetOwnerReference(node, c, scheme.Scheme)
 	if err != nil {

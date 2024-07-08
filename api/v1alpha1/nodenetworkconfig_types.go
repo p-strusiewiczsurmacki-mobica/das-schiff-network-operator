@@ -39,6 +39,7 @@ type NodeNetworkConfigStatus struct {
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=nnc,scope=Cluster
 //+kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.configStatus`
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // NodeNetworkConfig is the Schema for the node configuration.
 type NodeNetworkConfig struct {
@@ -77,16 +78,20 @@ func NewEmptyConfig(name string) *NodeNetworkConfig {
 }
 
 func CopyNodeNetworkConfig(src, dst *NodeNetworkConfig, name string) {
-	dst.Spec.Layer2 = make([]Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
-	dst.Spec.Vrf = make([]VRFRouteConfigurationSpec, len(src.Spec.Vrf))
-	dst.Spec.RoutingTable = make([]RoutingTableSpec, len(src.Spec.RoutingTable))
-	copy(dst.Spec.Layer2, src.Spec.Layer2)
-	copy(dst.Spec.Vrf, src.Spec.Vrf)
-	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
+	CopyNodeNetworkConfigSpec(&src.Spec, &dst.Spec)
 	dst.OwnerReferences = make([]metav1.OwnerReference, len(src.OwnerReferences))
 	copy(dst.OwnerReferences, src.OwnerReferences)
 	dst.Name = name
-	dst.Spec.Revision = src.Spec.Revision
+}
+
+func CopyNodeNetworkConfigSpec(src, dst *NodeNetworkConfigSpec) {
+	dst.Layer2 = make([]Layer2NetworkConfigurationSpec, len(src.Layer2))
+	dst.Vrf = make([]VRFRouteConfigurationSpec, len(src.Vrf))
+	dst.RoutingTable = make([]RoutingTableSpec, len(src.RoutingTable))
+	copy(dst.Layer2, src.Layer2)
+	copy(dst.Vrf, src.Vrf)
+	copy(dst.RoutingTable, src.RoutingTable)
+	dst.Revision = src.Revision
 }
 
 func init() {
