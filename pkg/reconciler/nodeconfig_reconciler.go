@@ -83,7 +83,7 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	nodes, err := listNodes(ctx, ncr.client)
 
 	if err != nil {
-		return fmt.Errorf("error lisiting nodes: %w", err)
+		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
 	if err := ncr.deployNodeConfigs(ctx, nodes, revisionToDeploy); err != nil {
@@ -95,10 +95,39 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error invalidating revision %s: %w", revisionToDeploy.Name, err)
 	}
 
+	ncr.logger.Info("updated isInvalid to false")
+
+	// remove all but last known valid revision
+	if err := ncr.revisionCleanup(ctx, revisionToDeploy); err != nil {
+		return fmt.Errorf("error cleaning redundant revisions: %w", err)
+	}
+
+	ncr.logger.Info("cleanup finished")
+
 	return nil
 }
 
-func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes map[string]*corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
+func (ncr *NodeConfigReconciler) revisionCleanup(ctx context.Context, validRevision *v1alpha1.NetworkConfigRevision) error {
+	revisions, err := listRevisions(ctx, ncr.client, ncr.logger)
+	if err != nil {
+		return fmt.Errorf("error listing revisions: %w", err)
+	}
+
+	// remove all but last known valid revision
+	for i := range revisions.Items {
+		if revisions.Items[i].Spec.Revision != validRevision.Spec.Revision {
+			if err := ncr.client.Delete(ctx, &revisions.Items[i]); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("error deleting revision %s: %w", revisions.Items[i].Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes []*corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
 	for _, node := range nodes {
 		newConfig, err := createConfigForNode(node, revision)
 		if err != nil {
@@ -253,19 +282,25 @@ func (ncr *NodeConfigReconciler) waitForConfig(ctx context.Context, config *v1al
 			if config.Status.ConfigStatus == StatusInvalid {
 				return fmt.Errorf("node %s config error: %w", config.Name, InvalidConfigError)
 			}
+
+			node := &corev1.Node{}
+			if err := ncr.client.Get(ctx, types.NamespacedName{Name: config.Name}, node); apierrors.IsNotFound(err) {
+				// node was deleted - skip
+				return nil
+			}
 		}
 	}
 }
 
-func listNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {
+func listNodes(ctx context.Context, c client.Client) ([]*corev1.Node, error) {
 	// list all nodes
 	list := &corev1.NodeList{}
 	if err := c.List(ctx, list); err != nil {
 		return nil, fmt.Errorf("unable to list nodes: %w", err)
 	}
 
-	// discard control-plane nodes and create map of nodes
-	nodes := make(map[string]*corev1.Node)
+	// discard control-plane and not-ready nodes
+	nodes := []*corev1.Node{}
 	for i := range list.Items {
 		_, isControlPlane := list.Items[i].Labels[controlPlaneLabel]
 		if !isControlPlane {
@@ -274,7 +309,7 @@ func listNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, e
 				// TODO: Should taint node.kubernetes.io/not-ready be used instead of Conditions?
 				if list.Items[i].Status.Conditions[j].Type == corev1.NodeReady &&
 					list.Items[i].Status.Conditions[j].Status == corev1.ConditionTrue {
-					nodes[list.Items[i].Name] = &list.Items[i]
+					nodes = append(nodes, &list.Items[i])
 					break
 				}
 			}

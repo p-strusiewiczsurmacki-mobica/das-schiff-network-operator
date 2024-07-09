@@ -1,11 +1,12 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: configurator
   namespace: system
   labels:
     app.kubernetes.io/component: configurator
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: configurator
@@ -38,8 +39,6 @@ spec:
       containers:
       - command:
         - /configurator
-        args:
-        - --update-limit=1
         env:
         - name: NODE_NAME
           valueFrom:

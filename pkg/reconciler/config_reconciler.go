@@ -50,12 +50,12 @@ func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeou
 		client:  clusterClient,
 	}
 
-	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultNodeConfigDebounceTime, logger)
+	reconciler.debouncer = debounce.NewDebouncer(reconciler.ReconcileDebounced, defaultNodeConfigDebounceTime, logger)
 
 	return reconciler, nil
 }
 
-func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
+func (cr *ConfigReconciler) ReconcileDebounced(ctx context.Context) error {
 	r := &reconcileConfig{
 		ConfigReconciler: cr,
 		Logger:           cr.logger,
@@ -67,54 +67,68 @@ func (cr *ConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	defer cancel()
 
 	// get VRFRouteConfiguration, Layer2networkConfiguration and RoutingTable objects
-	globalCfg, err := r.fetchConfigData(timeoutCtx)
+	configData, err := r.fetchConfigData(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("error fetching configuration details: %w", err)
 	}
 
 	// prepare new revision
-	revision, err := v1alpha1.NewRevision(globalCfg)
-
+	revision, err := v1alpha1.NewRevision(configData)
 	if err != nil {
 		return fmt.Errorf("error preparing new config revision: %w", err)
 	}
 
 	cr.logger.Info("new revision", "data", revision)
 
+	// get all known revisions
 	revisions, err := listRevisions(timeoutCtx, cr.client, cr.logger)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
 	cr.logger.Info("number of revisions:", "len", len(revisions.Items))
 
-	if len(revisions.Items) > 0 && revision.Spec.Revision == revisions.Items[0].Spec.Revision {
-		// new revision equals to the last one - skip
+	// check if revision should be skipped (e.g. it is the same as known invalid revision, or as currently deployed revision)
+	if shouldSkip(revisions, revision) {
 		return nil
 	}
 
+	// create revision object
+	if err := r.createRevision(timeoutCtx, revision); err != nil {
+		return fmt.Errorf("error creating revision %s: %w", revision.Spec.Revision, err)
+	}
+
+	cr.logger.Info("revision deployed", "value", revision.Spec.Revision)
+	return nil
+}
+
+func shouldSkip(revisions *v1alpha1.NetworkConfigRevisionList, processedRevision *v1alpha1.NetworkConfigRevision) bool {
+	if len(revisions.Items) > 0 && processedRevision.Spec.Revision == revisions.Items[0].Spec.Revision {
+		// new revision equals to the last known one - skip
+		return true
+	}
+
 	for i := range revisions.Items {
-		cr.logger.Info("revision", "data", r)
-		if revision.Spec.Revision == revisions.Items[i].Spec.Revision && revisions.Items[i].Status.IsInvalid {
+		if (processedRevision.Spec.Revision == revisions.Items[i].Spec.Revision) && revisions.Items[i].Status.IsInvalid {
 			// new revision is equal to known invalid revision
-			return nil
+			return true
 		}
 	}
 
-	// create revision object
-	if err := cr.client.Create(timeoutCtx, revision); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			if err := cr.client.Delete(timeoutCtx, revision); err != nil {
-				return fmt.Errorf("error creating deleting already exisitng NodeConfigRevision: %w", err)
-			}
-			if err := cr.client.Create(timeoutCtx, revision); err != nil {
-				return fmt.Errorf("error creating NodeConfigRevision: %w", err)
-			}
-		} else {
+	return false
+}
+
+func (r *reconcileConfig) createRevision(ctx context.Context, revision *v1alpha1.NetworkConfigRevision) error {
+	if err := r.client.Create(ctx, revision); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("error creating NodeConfigRevision: %w", err)
+		}
+		if err := r.client.Delete(ctx, revision); err != nil {
+			return fmt.Errorf("error creating deleting already existing NodeConfigRevision: %w", err)
+		}
+		if err := r.client.Create(ctx, revision); err != nil {
 			return fmt.Errorf("error creating NodeConfigRevision: %w", err)
 		}
 	}
-
-	cr.logger.Info("global config updated", "config", *globalCfg)
 	return nil
 }
 

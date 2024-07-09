@@ -60,8 +60,8 @@ func (r *NetworkConfigRevisionReconciler) Reconcile(ctx context.Context, _ ctrl.
 // SetupWithManager sets up the controller with the Manager.
 func (r *NetworkConfigRevisionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	predicates := predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return true },
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		UpdateFunc:  func(event.UpdateEvent) bool { return true },
 		DeleteFunc:  func(event.DeleteEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}

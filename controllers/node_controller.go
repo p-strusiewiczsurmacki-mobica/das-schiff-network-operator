@@ -57,8 +57,8 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	predicates := predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		UpdateFunc:  func(event.UpdateEvent) bool { return false },
 		DeleteFunc:  func(event.DeleteEvent) bool { return false },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}

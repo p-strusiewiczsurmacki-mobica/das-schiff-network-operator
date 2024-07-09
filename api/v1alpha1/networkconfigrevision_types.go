@@ -82,8 +82,6 @@ func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 			Config:   config.Spec,
 			Revision: hashHex,
 		},
-		Status: NetworkConfigRevisionStatus{
-			IsInvalid: false,
-		},
+		Status: NetworkConfigRevisionStatus{},
 	}, nil
 }
