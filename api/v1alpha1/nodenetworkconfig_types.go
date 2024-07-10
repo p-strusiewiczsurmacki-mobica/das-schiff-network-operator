@@ -39,7 +39,7 @@ type NodeNetworkConfigStatus struct {
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=nnc,scope=Cluster
 //+kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.configStatus`
-// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // NodeNetworkConfig is the Schema for the node configuration.
 type NodeNetworkConfig struct {

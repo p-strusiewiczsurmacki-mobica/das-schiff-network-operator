@@ -146,7 +146,7 @@ func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes []
 		}
 		if err := ncr.deployConfig(ctx, newConfig, currentConfig, node); err != nil {
 			if errors.Is(err, InvalidConfigError) || errors.Is(err, context.DeadlineExceeded) {
-				// revision results in invalid config or in context timout - invalidate revision
+				// revision results in invalid config or in context timeout - invalidate revision
 				revision.Status.IsInvalid = true
 				if err := ncr.client.Status().Update(ctx, revision); err != nil {
 					return fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
