@@ -176,7 +176,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	// force leader election
 	options.LeaderElection = true
 	if options.LeaderElectionID == "" {
-		options.LeaderElectionID = "network-operator-configurator"
+		options.LeaderElectionID = "network-operator"
 	}
 
 	// force turn off metrics server
