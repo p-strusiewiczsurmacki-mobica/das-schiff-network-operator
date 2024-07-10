@@ -22,71 +22,61 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// NodeConfigSpec defines the desired state of NodeConfig.
-type NodeConfigSpec struct {
+// NodeNetworkConfigSpec defines the desired state of NodeConfig.
+type NodeNetworkConfigSpec struct {
+	Revision     string                           `json:"revision"`
 	Layer2       []Layer2NetworkConfigurationSpec `json:"layer2"`
 	Vrf          []VRFRouteConfigurationSpec      `json:"vrf"`
 	RoutingTable []RoutingTableSpec               `json:"routingTable"`
 }
 
-// NodeConfigStatus defines the observed state of NodeConfig.
-type NodeConfigStatus struct {
+// NodeNetworkConfigStatus defines the observed state of NodeConfig.
+type NodeNetworkConfigStatus struct {
 	ConfigStatus string `json:"configStatus"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:resource:shortName=nc,scope=Cluster
+//+kubebuilder:resource:shortName=nnc,scope=Cluster
 //+kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.configStatus`
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// NodeConfig is the Schema for the node configuration.
-type NodeConfig struct {
+// NodeNetworkConfig is the Schema for the node configuration.
+type NodeNetworkConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   NodeConfigSpec   `json:"spec,omitempty"`
-	Status NodeConfigStatus `json:"status,omitempty"`
+	Spec   NodeNetworkConfigSpec   `json:"spec,omitempty"`
+	Status NodeNetworkConfigStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// NodeConfigList contains a list of NodeConfig.
-type NodeConfigList struct {
+// NodeNetworkConfigList contains a list of NodeConfig.
+type NodeNetworkConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []NodeConfig `json:"items"`
+	Items           []NodeNetworkConfig `json:"items"`
 }
 
-func (nc *NodeConfig) IsEqual(c *NodeConfig) bool {
+func (nc *NodeNetworkConfig) IsEqual(c *NodeNetworkConfig) bool {
 	return reflect.DeepEqual(nc.Spec.Layer2, c.Spec.Layer2) && reflect.DeepEqual(nc.Spec.Vrf, c.Spec.Vrf) && reflect.DeepEqual(nc.Spec.RoutingTable, c.Spec.RoutingTable)
 }
 
-func NewEmptyConfig(name string) *NodeConfig {
-	return &NodeConfig{
+func NewEmptyConfig(name string) *NodeNetworkConfig {
+	return &NodeNetworkConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: NodeConfigSpec{
+		Spec: NodeNetworkConfigSpec{
 			Vrf:          []VRFRouteConfigurationSpec{},
 			Layer2:       []Layer2NetworkConfigurationSpec{},
 			RoutingTable: []RoutingTableSpec{},
 		},
-		Status: NodeConfigStatus{
+		Status: NodeNetworkConfigStatus{
 			ConfigStatus: "",
 		},
 	}
 }
 
-func CopyNodeConfig(src, dst *NodeConfig, name string) {
-	dst.Spec.Layer2 = make([]Layer2NetworkConfigurationSpec, len(src.Spec.Layer2))
-	dst.Spec.Vrf = make([]VRFRouteConfigurationSpec, len(src.Spec.Vrf))
-	dst.Spec.RoutingTable = make([]RoutingTableSpec, len(src.Spec.RoutingTable))
-	copy(dst.Spec.Layer2, src.Spec.Layer2)
-	copy(dst.Spec.Vrf, src.Spec.Vrf)
-	copy(dst.Spec.RoutingTable, src.Spec.RoutingTable)
-	dst.OwnerReferences = make([]metav1.OwnerReference, len(src.OwnerReferences))
-	copy(dst.OwnerReferences, src.OwnerReferences)
-	dst.Name = name
-}
-
 func init() {
-	SchemeBuilder.Register(&NodeConfig{}, &NodeConfigList{})
+	SchemeBuilder.Register(&NodeNetworkConfig{}, &NodeNetworkConfigList{})
 }

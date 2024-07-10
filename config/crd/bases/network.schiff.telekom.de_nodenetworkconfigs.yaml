@@ -4,26 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.14.0
-  name: nodeconfigs.network.schiff.telekom.de
+  name: nodenetworkconfigs.network.schiff.telekom.de
 spec:
   group: network.schiff.telekom.de
   names:
-    kind: NodeConfig
-    listKind: NodeConfigList
-    plural: nodeconfigs
+    kind: NodeNetworkConfig
+    listKind: NodeNetworkConfigList
+    plural: nodenetworkconfigs
     shortNames:
-    - nc
-    singular: nodeconfig
+    - nnc
+    singular: nodenetworkconfig
   scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.configStatus
       name: Status
       type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: NodeConfig is the Schema for the node configuration.
+        description: NodeNetworkConfig is the Schema for the node configuration.
         properties:
           apiVersion:
             description: |-
@@ -43,7 +46,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: NodeConfigSpec defines the desired state of NodeConfig.
+            description: NodeNetworkConfigSpec defines the desired state of NodeConfig.
             properties:
               layer2:
                 items:
@@ -137,6 +140,8 @@ spec:
                   - vni
                   type: object
                 type: array
+              revision:
+                type: string
               routingTable:
                 items:
                   description: RoutingTableSpec defines the desired state of RoutingTable.
@@ -250,11 +255,12 @@ spec:
                 type: array
             required:
             - layer2
+            - revision
             - routingTable
             - vrf
             type: object
           status:
-            description: NodeConfigStatus defines the observed state of NodeConfig.
+            description: NodeNetworkConfigStatus defines the observed state of NodeConfig.
             properties:
               configStatus:
                 type: string

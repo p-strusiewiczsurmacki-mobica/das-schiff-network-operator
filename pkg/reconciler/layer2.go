@@ -27,7 +27,7 @@ func (r *reconcileConfig) fetchLayer2(ctx context.Context) ([]networkv1alpha1.La
 	return l2vnis, nil
 }
 
-func (r *reconcile) reconcileLayer2(l2vnis []networkv1alpha1.Layer2NetworkConfigurationSpec) error {
+func (r *reconcileNodeNetworkConfig) reconcileLayer2(l2vnis []networkv1alpha1.Layer2NetworkConfigurationSpec) error {
 	desired, err := r.getDesired(l2vnis)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (r *reconcile) reconcileLayer2(l2vnis []networkv1alpha1.Layer2NetworkConfig
 	return nil
 }
 
-func (r *reconcile) createL2(info *nl.Layer2Information, anycastTrackerInterfaces *[]int) error {
+func (r *reconcileNodeNetworkConfig) createL2(info *nl.Layer2Information, anycastTrackerInterfaces *[]int) error {
 	r.Logger.Info("Creating Layer2", "vlan", info.VlanID, "vni", info.VNI)
 	err := r.netlinkManager.CreateL2(info)
 	if err != nil {
@@ -96,7 +96,7 @@ func (r *reconcile) createL2(info *nl.Layer2Information, anycastTrackerInterface
 	return nil
 }
 
-func (r *reconcile) getDesired(l2vnis []networkv1alpha1.Layer2NetworkConfigurationSpec) ([]nl.Layer2Information, error) {
+func (r *reconcileNodeNetworkConfig) getDesired(l2vnis []networkv1alpha1.Layer2NetworkConfigurationSpec) ([]nl.Layer2Information, error) {
 	availableVrfs, err := r.netlinkManager.ListL3()
 	if err != nil {
 		return nil, fmt.Errorf("error loading available VRFs: %w", err)
@@ -164,7 +164,7 @@ func determineToBeDeleted(existing, desired []nl.Layer2Information) []nl.Layer2I
 	return toDelete
 }
 
-func (r *reconcile) reconcileExistingLayer(desired, currentConfig *nl.Layer2Information, anycastTrackerInterfaces *[]int) error {
+func (r *reconcileNodeNetworkConfig) reconcileExistingLayer(desired, currentConfig *nl.Layer2Information, anycastTrackerInterfaces *[]int) error {
 	r.Logger.Info("Reconciling existing Layer2", "vlan", desired.VlanID, "vni", desired.VNI)
 	err := r.netlinkManager.ReconcileL2(currentConfig, desired)
 	if err != nil {

@@ -56,7 +56,7 @@ rules:
 - apiGroups:
   - network.schiff.telekom.de
   resources:
-  - nodeconfigs
+  - networkconfigrevisions
   verbs:
   - create
   - delete
@@ -68,13 +68,39 @@ rules:
 - apiGroups:
   - network.schiff.telekom.de
   resources:
-  - nodeconfigs/finalizers
+  - networkconfigrevisions/finalizers
   verbs:
   - update
 - apiGroups:
   - network.schiff.telekom.de
   resources:
-  - nodeconfigs/status
+  - networkconfigrevisions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodenetworkconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodenetworkconfigs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - network.schiff.telekom.de
+  resources:
+  - nodenetworkconfigs/status
   verbs:
   - get
   - patch

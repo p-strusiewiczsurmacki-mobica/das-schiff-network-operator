@@ -30,7 +30,6 @@ import (
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/controllers"
-	configmanager "github.com/telekom/das-schiff-network-operator/pkg/config_manager"
 	"github.com/telekom/das-schiff-network-operator/pkg/managerconfig"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 
@@ -59,15 +58,12 @@ func init() {
 func main() {
 	var configFile string
 	var timeout string
-	var limit int64
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
 			"Command-line flags override configuration from this file.")
 	flag.StringVar(&timeout, "timeout", reconciler.DefaultTimeout,
 		"Timeout for Kubernetes API connections (default: 60s).")
-	flag.Int64Var(&limit, "update-limit", reconciler.DefaultNodeUpdateLimit,
-		"Defines how many nodes can be configured at once (default: 1).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -88,7 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _, err = setupReconcilers(mgr, timeout, limit)
+	err = setupReconcilers(mgr, timeout)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
@@ -101,29 +97,25 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconciler.ConfigReconciler, *reconciler.NodeReconciler, error) {
+func setupReconcilers(mgr manager.Manager, timeout string) error {
 	timoutVal, err := time.ParseDuration(timeout)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
+		return fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
 	}
 
-	cmInfo := make(chan bool)
-	nodeDelInfo := make(chan []string)
-
-	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal, cmInfo)
+	cr, err := reconciler.NewConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("ConfigReconciler"), timoutVal)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to create config reconciler reconciler: %w", err)
+		return fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	nr, err := reconciler.NewNodeReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeReconciler"), timoutVal, cmInfo, nodeDelInfo)
+	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to create node reconciler: %w", err)
+		return fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
-	cm := configmanager.New(mgr.GetClient(), cr, nr, mgr.GetLogger().WithName("ConfigManager"), timoutVal, limit, cmInfo, nodeDelInfo)
-
-	if err := mgr.Add(newOnLeaderElectionEvent(cm)); err != nil {
-		return nil, nil, fmt.Errorf("unable to create OnLeadeElectionEvent: %w", err)
+	initialSetup := newOnLeaderElectionEvent(cr)
+	if err := mgr.Add(initialSetup); err != nil {
+		return fmt.Errorf("error adding on leader election event to the manager: %w", err)
 	}
 
 	if err = (&controllers.VRFRouteConfigurationReconciler{
@@ -131,7 +123,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: cr,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
+		return fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
 	}
 
 	if err = (&controllers.Layer2NetworkConfigurationReconciler{
@@ -139,7 +131,7 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: cr,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
+		return fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
 	}
 
 	if err = (&controllers.RoutingTableReconciler{
@@ -147,18 +139,26 @@ func setupReconcilers(mgr manager.Manager, timeout string, limit int64) (*reconc
 		Scheme:     mgr.GetScheme(),
 		Reconciler: cr,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
 	if err = (&controllers.NodeReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
-		Reconciler: nr,
+		Reconciler: ncr,
 	}).SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("unable to create RoutingTable controller: %w", err)
+		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
-	return cr, nr, nil
+	if err = (&controllers.NetworkConfigRevisionReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: ncr,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
+	}
+
+	return nil
 }
 
 func setMangerOptions(configFile string) (*manager.Options, error) {
@@ -176,7 +176,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	// force leader election
 	options.LeaderElection = true
 	if options.LeaderElectionID == "" {
-		options.LeaderElectionID = "network-operator-configurator"
+		options.LeaderElectionID = "network-operator"
 	}
 
 	// force turn off metrics server
@@ -186,12 +186,12 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 }
 
 type onLeaderElectionEvent struct {
-	cm *configmanager.ConfigManager
+	cr *reconciler.ConfigReconciler
 }
 
-func newOnLeaderElectionEvent(cm *configmanager.ConfigManager) *onLeaderElectionEvent {
+func newOnLeaderElectionEvent(cr *reconciler.ConfigReconciler) *onLeaderElectionEvent {
 	return &onLeaderElectionEvent{
-		cm: cm,
+		cr: cr,
 	}
 }
 
@@ -200,27 +200,8 @@ func (*onLeaderElectionEvent) NeedLeaderElection() bool {
 }
 
 func (e *onLeaderElectionEvent) Start(ctx context.Context) error {
-	setupLog.Info("onLeaderElectionEvent started")
-	if err := e.cm.DirtyStartup(ctx); err != nil {
-		return fmt.Errorf("error while checking previous leader work: %w", err)
+	if err := e.cr.ReconcileDebounced(ctx); err != nil {
+		return fmt.Errorf("error configuring initial configuration revision: %w", err)
 	}
-
-	watchNodesErr := make(chan error)
-	watchConfigsErr := make(chan error)
-	leCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go e.cm.WatchDeletedNodes(leCtx, watchNodesErr)
-	go e.cm.WatchConfigs(leCtx, watchConfigsErr)
-
-	select {
-	case <-leCtx.Done():
-		if err := leCtx.Err(); err != nil {
-			return fmt.Errorf("onLeaderElection context error: %w", leCtx.Err())
-		}
-		return nil
-	case err := <-watchNodesErr:
-		return fmt.Errorf("node watcher error: %w", err)
-	case err := <-watchConfigsErr:
-		return fmt.Errorf("config watcher error: %w", err)
-	}
+	return nil
 }
