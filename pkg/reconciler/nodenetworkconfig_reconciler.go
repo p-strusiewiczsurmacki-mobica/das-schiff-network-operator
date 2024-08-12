@@ -16,11 +16,12 @@ import (
 	"github.com/telekom/das-schiff-network-operator/pkg/healthcheck"
 	"github.com/telekom/das-schiff-network-operator/pkg/nl"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	defaultDebounceTime = 5 * time.Second
+	defaultDebounceTime = 1 * time.Second
 
 	DefaultNodeConfigPath = "/opt/network-operator/nodeConfig.yaml"
 	nodeConfigFilePerm    = 0o600
@@ -111,6 +112,11 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 	if r.nodeConfig != nil && r.nodeConfig.Spec.Revision == cfg.Spec.Revision {
 		// current in-memory conifg has the same revision as the fetched one
 		// this means that config was already provisioned - skip
+		if cfg.Status.ConfigStatus != StatusProvisioned {
+			if err := setStatus(ctx, r.client, cfg, StatusProvisioned); err != nil {
+				return fmt.Errorf("error setting config status: %w", err)
+			}
+		}
 		return nil
 	}
 
@@ -118,7 +124,6 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 	if cfg.Status.ConfigStatus == StatusInvalid {
 		return nil
 	}
-
 	if err := r.processConfig(ctx, cfg); err != nil {
 		return fmt.Errorf("error while processing config: %w", err)
 	}
@@ -134,7 +139,7 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 
 func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
 	// set config status as provisioned (valid)
-	if err := r.setStatus(ctx, cfg, StatusProvisioning); err != nil {
+	if err := setStatus(ctx, r.client, cfg, StatusProvisioning); err != nil {
 		return fmt.Errorf("error setting config status %s: %w", StatusProvisioning, err)
 	}
 
@@ -159,26 +164,26 @@ func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1a
 	}
 
 	// set config status as provisioned (valid)
-	if err := r.setStatus(ctx, cfg, StatusProvisioned); err != nil {
+	if err := setStatus(ctx, r.client, cfg, StatusProvisioned); err != nil {
 		return fmt.Errorf("error setting config status %s: %w", StatusProvisioned, err)
 	}
 
 	return nil
 }
 
-func (r *reconcileNodeNetworkConfig) setStatus(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig, status string) error {
+func setStatus(ctx context.Context, c client.Client, cfg *v1alpha1.NodeNetworkConfig, status string) error {
 	// set config status as provisioned (valid)
 	cfg.Status.ConfigStatus = status
-	if err := r.client.Status().Update(ctx, cfg); err != nil {
+	cfg.Status.LastModification = metav1.Now()
+	if err := c.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}
 	return nil
 }
 
 func (r *reconcileNodeNetworkConfig) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
-	cfg.Status.ConfigStatus = StatusInvalid
-	if err := r.client.Status().Update(ctx, cfg); err != nil {
-		return fmt.Errorf("error updating NodeConfig status: %w", err)
+	if err := setStatus(ctx, r.client, cfg, StatusInvalid); err != nil {
+		return fmt.Errorf("error invalidating config: %w", err)
 	}
 
 	// try to restore previously known good NodeConfig
