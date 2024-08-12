@@ -20,6 +20,18 @@ spec:
     - jsonPath: .status.isInvalid
       name: Invalid
       type: string
+    - jsonPath: .stats.ongoing
+      name: Ongoing
+      type: date
+    - jsonPath: .stats.ready
+      name: Up-to-date
+      type: date
+    - jsonPath: .stats.queued
+      name: Queued
+      type: date
+    - jsonPath: .stats.available
+      name: Available
+      type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -271,10 +283,22 @@ spec:
             type: object
           status:
             properties:
+              available:
+                type: integer
               isInvalid:
                 type: boolean
+              ongoing:
+                type: integer
+              queued:
+                type: integer
+              ready:
+                type: integer
             required:
+            - available
             - isInvalid
+            - ongoing
+            - queued
+            - ready
             type: object
         type: object
     served: true

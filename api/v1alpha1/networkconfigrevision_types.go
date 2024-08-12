@@ -33,12 +33,20 @@ type NetworkConfigRevisionSpec struct {
 
 type NetworkConfigRevisionStatus struct {
 	IsInvalid bool `json:"isInvalid"`
+	Ready     int  `json:"ready"`
+	Ongoing   int  `json:"ongoing"`
+	Queued    int  `json:"queued"`
+	Available int  `json:"available"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=ncr,scope=Cluster
 //+kubebuilder:printcolumn:name="Invalid",type=string,JSONPath=`.status.isInvalid`
+//+kubebuilder:printcolumn:name="Ongoing",type="date",JSONPath=".stats.ongoing"
+//+kubebuilder:printcolumn:name="Up-to-date",type="date",JSONPath=".stats.ready"
+//+kubebuilder:printcolumn:name="Queued",type="date",JSONPath=".stats.queued"
+//+kubebuilder:printcolumn:name="Available",type="date",JSONPath=".stats.available"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // NetworkConfig is the Schema for the node configuration.

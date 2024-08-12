@@ -118,39 +118,15 @@ func setupReconcilers(mgr manager.Manager, timeout string) error {
 		return fmt.Errorf("error adding on leader election event to the manager: %w", err)
 	}
 
-	if err = (&controllers.VRFRouteConfigurationReconciler{
+	if err = (&controllers.ConfigReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: cr,
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
+		return fmt.Errorf("unable to create Config controller: %w", err)
 	}
 
-	if err = (&controllers.Layer2NetworkConfigurationReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: cr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
-	}
-
-	if err = (&controllers.RoutingTableReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: cr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
-	}
-
-	if err = (&controllers.NodeReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: ncr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
-	}
-
-	if err = (&controllers.NetworkConfigRevisionReconciler{
+	if err = (&controllers.RevisionReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: ncr,

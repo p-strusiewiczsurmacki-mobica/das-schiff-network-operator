@@ -81,6 +81,27 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
+	nodeConfigs := &v1alpha1.NodeNetworkConfigList{}
+	if err := ncr.client.List(ctx, nodeConfigs); err != nil {
+		return fmt.Errorf("error listing nodeConfigs")
+	}
+
+	available := len(nodes)
+	ready := 0
+	for i := range nodeConfigs.Items {
+		if nodeConfigs.Items[i].Spec.Revision == revisionToDeploy.Spec.Revision {
+			ready++
+		}
+	}
+
+	revisionToDeploy.Status.Available = available
+	revisionToDeploy.Status.Ready = ready
+	revisionToDeploy.Status.Queued = available - ready
+
+	if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
+		return fmt.Errorf("error updating revision's status %s: %w", revisionToDeploy.Name, err)
+	}
+
 	if err := ncr.deployNodeConfigs(ctx, nodes, revisionToDeploy); err != nil {
 		return fmt.Errorf("error deploying node configurations: %w", err)
 	}

@@ -34,7 +34,7 @@ var (
 				"metadata": {
 					"creationTimestamp": "2024-07-11T15:16:00Z",
 					"generation": 1,
-					"name": "74e8e05dfb",
+					"name": "19dad916c7",
 					"resourceVersion": "91836",
 					"uid": "797e11da-1d60-4263-b2ad-fe0a73d761b7"
 				},
@@ -56,7 +56,7 @@ var (
 						"routingTable": [],
 						"vrf": []
 					},
-					"revision": "74e8e05dfbeabf8342cb581f5e66cd5252a9cfc4be46434b3a0efaa0a4eeaa66"
+					"revision": "19dad916c701bc0aeebd14f66bae591f402cabd31cd9b150b87bca710abe3b33"
 				},
 				"status": {
 					"isInvalid": false
@@ -165,7 +165,7 @@ func TestReconciler(t *testing.T) {
 var _ = Describe("ConfigReconciler", func() {
 	Context("NewConfigReconciler() should", func() {
 		It("return new config reconciler", func() {
-			c := createClient()
+			c := createFullClient()
 			r, err := NewConfigReconciler(c, logr.New(nil), time.Millisecond*100)
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
@@ -173,7 +173,7 @@ var _ = Describe("ConfigReconciler", func() {
 	})
 	Context("ReconcileDebounced() should", func() {
 		It("return no error", func() {
-			c := createClient()
+			c := createFullClient()
 			r, err := NewConfigReconciler(c, logr.New(nil), time.Millisecond*100)
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
@@ -213,10 +213,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 			Expect(err).To(HaveOccurred())
 		})
 		It("no error if NodeConfigRevision deployed successfully", func() {
-			fakeNCR := &v1alpha1.NetworkConfigRevisionList{}
-			err := json.Unmarshal([]byte(fakeNCRJSON), fakeNCR)
-			Expect(err).ShouldNot(HaveOccurred())
-			c := createClientWithStatus(&fakeNCR.Items[0], fakeNCR)
+			c := createFullClient()
 			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
@@ -230,7 +227,11 @@ var _ = Describe("NodeConfigReconciler", func() {
 			fakeNodes := &corev1.NodeList{}
 			err = json.Unmarshal([]byte(fakeNodesJSON), fakeNodes)
 			Expect(err).ToNot(HaveOccurred())
-			c := createClientWithStatus(&fakeNCR.Items[0], fakeNCR, fakeNodes)
+			fakeNNC := &v1alpha1.NodeNetworkConfigList{}
+			err = json.Unmarshal([]byte(fakeNNCJSON), fakeNNC)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			c := createClientWithStatus(&fakeNCR.Items[0], &fakeNNC.Items[0], fakeNCR, fakeNNC, fakeNodes)
 			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
@@ -293,13 +294,13 @@ var _ = Describe("NodeNetworkConfigReconciler", func() {
 		It("return error if cannot configure FRR", func() {
 			os.Setenv(operatorConfigEnv, testConfig)
 			os.Setenv(healthcheck.NodenameEnv, "test-node")
-			fakeNNC := &v1alpha1.NodeNetworkConfigList{}
-			err := json.Unmarshal([]byte(fakeNNCJSON), fakeNNC)
-			Expect(err).ShouldNot(HaveOccurred())
+
 			frrManagerMock := mock_frr.NewMockManagerInterface(mockctrl)
 			netlinkMock := mock_nl.NewMockToolkitInterface(mockctrl)
 			netlinkMock.EXPECT().LinkList().Return([]netlink.Link{}, nil)
-			c := createClientWithStatus(&fakeNNC.Items[0], fakeNNC)
+
+			c := createFullClient()
+
 			frrManagerMock.EXPECT().Init().Return(nil)
 			frrManagerMock.EXPECT().Configure(gomock.Any(),
 				gomock.Any()).Return(false, fmt.Errorf("configuration error"))
@@ -315,13 +316,12 @@ var _ = Describe("NodeNetworkConfigReconciler", func() {
 		It("return error if failed to reload FRR", func() {
 			os.Setenv(operatorConfigEnv, testConfig)
 			os.Setenv(healthcheck.NodenameEnv, "test-node")
-			fakeNNC := &v1alpha1.NodeNetworkConfigList{}
-			err := json.Unmarshal([]byte(fakeNNCJSON), fakeNNC)
-			Expect(err).ShouldNot(HaveOccurred())
+
 			frrManagerMock := mock_frr.NewMockManagerInterface(mockctrl)
 			netlinkMock := mock_nl.NewMockToolkitInterface(mockctrl)
 			netlinkMock.EXPECT().LinkList().Return([]netlink.Link{}, nil)
-			c := createClientWithStatus(&fakeNNC.Items[0], fakeNNC)
+
+			c := createFullClient()
 			frrManagerMock.EXPECT().Init().Return(nil)
 			frrManagerMock.EXPECT().Configure(gomock.Any(), gomock.Any()).Return(true, nil)
 			frrManagerMock.EXPECT().ReloadFRR().Return(fmt.Errorf("error reloading FRR"))
@@ -338,14 +338,12 @@ var _ = Describe("NodeNetworkConfigReconciler", func() {
 		It("return error if cannot configure networking", func() {
 			os.Setenv(operatorConfigEnv, testConfig)
 			os.Setenv(healthcheck.NodenameEnv, "test-node")
-			fakeNNC := &v1alpha1.NodeNetworkConfigList{}
-			err := json.Unmarshal([]byte(fakeNNCJSON), fakeNNC)
-			Expect(err).ShouldNot(HaveOccurred())
 			frrManagerMock := mock_frr.NewMockManagerInterface(mockctrl)
 			netlinkMock := mock_nl.NewMockToolkitInterface(mockctrl)
 			netlinkMock.EXPECT().LinkList().Return([]netlink.Link{}, nil).Times(3)
 			netlinkMock.EXPECT().LinkAdd(gomock.Any()).Return(fmt.Errorf("link add error"))
-			c := createClientWithStatus(&fakeNNC.Items[0], fakeNNC)
+
+			c := createFullClient()
 			frrManagerMock.EXPECT().Init().Return(nil)
 			frrManagerMock.EXPECT().Configure(gomock.Any(), gomock.Any()).Return(true, nil)
 			frrManagerMock.EXPECT().ReloadFRR().Return(nil)
@@ -366,9 +364,8 @@ func createClient(initObjs ...runtime.Object) client.Client {
 	return cb.Build()
 }
 
-func createClientWithStatus(obj client.Object, initObjs ...runtime.Object) client.Client {
-	cb := clientBuilder(initObjs...).WithStatusSubresource(obj)
-	return cb.Build()
+func createClientWithStatus(ncr, nnc client.Object, initObjs ...runtime.Object) client.Client {
+	return clientBuilder(initObjs...).WithStatusSubresource(nnc, ncr).Build()
 }
 
 func clientBuilder(initObjs ...runtime.Object) *fake.ClientBuilder {
@@ -378,4 +375,17 @@ func clientBuilder(initObjs ...runtime.Object) *fake.ClientBuilder {
 	err = v1alpha1.AddToScheme(s)
 	Expect(err).ToNot(HaveOccurred())
 	return fake.NewClientBuilder().WithScheme(s).WithRuntimeObjects(initObjs...)
+}
+
+func createFullClient() client.Client {
+	fakeNNC := &v1alpha1.NodeNetworkConfigList{}
+	err := json.Unmarshal([]byte(fakeNNCJSON), fakeNNC)
+	Expect(err).ShouldNot(HaveOccurred())
+
+	fakeNCR := &v1alpha1.NetworkConfigRevisionList{}
+	err = json.Unmarshal([]byte(fakeNCRJSON), fakeNCR)
+	Expect(err).ShouldNot(HaveOccurred())
+	c := clientBuilder(fakeNNC, fakeNCR).WithStatusSubresource(&fakeNNC.Items[0], &fakeNCR.Items[0]).Build()
+
+	return c
 }

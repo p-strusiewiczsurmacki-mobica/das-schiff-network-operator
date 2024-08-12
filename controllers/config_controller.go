@@ -31,8 +31,8 @@ import (
 
 const requeueTime = 10 * time.Minute
 
-// Layer2NetworkConfigurationReconciler reconciles a Layer2NetworkConfiguration object.
-type Layer2NetworkConfigurationReconciler struct {
+// ConfigReconciler reconciles a Layer2NetworkConfiguration object.
+type ConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -43,12 +43,20 @@ type Layer2NetworkConfigurationReconciler struct {
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=layer2networkconfigurations/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=layer2networkconfigurations/finalizers,verbs=update
 
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=routingtables/finalizers,verbs=update
+
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=vrfrouteconfigurations/finalizers,verbs=update
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
-func (r *Layer2NetworkConfigurationReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
+func (r *ConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	r.Reconciler.Reconcile(ctx)
@@ -57,9 +65,11 @@ func (r *Layer2NetworkConfigurationReconciler) Reconcile(ctx context.Context, _ 
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *Layer2NetworkConfigurationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&networkv1alpha1.Layer2NetworkConfiguration{}).
+		For(&networkv1alpha1.RoutingTable{}).
+		For(&networkv1alpha1.VRFRouteConfiguration{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
