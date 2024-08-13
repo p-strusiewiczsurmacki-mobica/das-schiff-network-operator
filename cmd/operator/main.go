@@ -108,7 +108,7 @@ func setupReconcilers(mgr manager.Manager, timeout string) error {
 		return fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal)
+	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal, mgr.GetScheme())
 	if err != nil {
 		return fmt.Errorf("unable to create node reconciler: %w", err)
 	}

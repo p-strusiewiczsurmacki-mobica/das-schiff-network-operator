@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -62,7 +63,7 @@ func (r *RevisionReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctr
 func (r *RevisionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&networkv1alpha1.NetworkConfigRevision{}).
-		For(&corev1.Node{}).
+		Watches(&corev1.Node{}, &handler.EnqueueRequestForObject{}).
 		Owns(&networkv1alpha1.NodeNetworkConfig{}).
 		Complete(r)
 	if err != nil {

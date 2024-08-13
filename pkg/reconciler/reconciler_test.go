@@ -187,7 +187,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 	Context("NewNodeConfigReconciler() should", func() {
 		It("return new node config reconciler", func() {
 			c := createClient()
-			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
+			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100, runtime.NewScheme())
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
 		})
@@ -195,7 +195,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 	Context("reconcileDebaunced() should", func() {
 		It("return no error if there is nothing to deploy", func() {
 			c := createClient()
-			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
+			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100, runtime.NewScheme())
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
 			err = r.reconcileDebounced(context.TODO())
@@ -206,7 +206,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 			err := json.Unmarshal([]byte(fakeNCRJSON), fakeNCR)
 			Expect(err).ShouldNot(HaveOccurred())
 			c := createClient(fakeNCR)
-			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
+			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100, runtime.NewScheme())
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
 			err = r.reconcileDebounced(context.TODO())
@@ -214,7 +214,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 		})
 		It("no error if NodeConfigRevision deployed successfully", func() {
 			c := createFullClient()
-			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
+			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100, runtime.NewScheme())
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
 			err = r.reconcileDebounced(context.TODO())
@@ -232,7 +232,7 @@ var _ = Describe("NodeConfigReconciler", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			c := createClientWithStatus(&fakeNCR.Items[0], &fakeNNC.Items[0], fakeNCR, fakeNNC, fakeNodes)
-			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100)
+			r, err := NewNodeConfigReconciler(c, logr.New(nil), time.Millisecond*100, runtime.NewScheme())
 			Expect(r).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())
 			err = r.reconcileDebounced(context.TODO())

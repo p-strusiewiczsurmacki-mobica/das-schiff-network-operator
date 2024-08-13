@@ -120,17 +120,17 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 		return nil
 	}
 
-	if err := r.updateRevisionCounter(ctx, cfg, 1); err != nil {
-		return fmt.Errorf("error updating revision's ongoing deployment counter: %w", err)
-	}
+	// if err := r.updateRevisionCounter(ctx, cfg, 1, -1, 0); err != nil {
+	// 	return fmt.Errorf("error updating revision's ongoing deployment counter: %w", err)
+	// }
 
 	if err := r.processConfig(ctx, cfg); err != nil {
 		return fmt.Errorf("error while processing config: %w", err)
 	}
 
-	if err := r.updateRevisionCounter(ctx, cfg, -1); err != nil {
-		return fmt.Errorf("error updating revision's ongoing deployment counter: %w", err)
-	}
+	// if err := r.updateRevisionCounter(ctx, cfg, -1, 0, 1); err != nil {
+	// 	return fmt.Errorf("error updating revision's ongoing deployment counter: %w", err)
+	// }
 
 	// replace in-memory working config and store it on the disk
 	reconciler.nodeConfig = cfg
@@ -141,13 +141,16 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 	return nil
 }
 
-func (reconciler *NodeNetworkConfigReconciler) updateRevisionCounter(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig, value int) error {
+func (reconciler *NodeNetworkConfigReconciler) updateRevisionCounter(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig,
+	ongoing, queued, ready int) error {
 	revision := &v1alpha1.NetworkConfigRevision{}
 	if err := reconciler.client.Get(ctx, types.NamespacedName{Name: cfg.Spec.Revision[:10]}, revision); err != nil {
 		return fmt.Errorf("error getting revison for config: %w", err)
 	}
 
-	revision.Status.Ongoing += value
+	revision.Status.Ongoing += ongoing
+	revision.Status.Queued += queued
+	revision.Status.Ready += ready
 
 	if err := reconciler.client.Status().Update(ctx, revision); err != nil {
 		return fmt.Errorf("error updating revison's status: %w", err)

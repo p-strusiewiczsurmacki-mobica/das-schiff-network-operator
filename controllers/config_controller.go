@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -67,9 +68,10 @@ func (r *ConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.
 // SetupWithManager sets up the controller with the Manager.
 func (r *ConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&networkv1alpha1.Layer2NetworkConfiguration{}).
-		For(&networkv1alpha1.RoutingTable{}).
-		For(&networkv1alpha1.VRFRouteConfiguration{}).
+		Named("config controller").
+		Watches(&networkv1alpha1.Layer2NetworkConfiguration{}, &handler.EnqueueRequestForObject{}).
+		Watches(&networkv1alpha1.RoutingTable{}, &handler.EnqueueRequestForObject{}).
+		Watches(&networkv1alpha1.VRFRouteConfiguration{}, &handler.EnqueueRequestForObject{}).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

@@ -43,13 +43,13 @@ type NetworkConfigRevisionStatus struct {
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=ncr,scope=Cluster
 //+kubebuilder:printcolumn:name="Invalid",type=string,JSONPath=`.status.isInvalid`
-//+kubebuilder:printcolumn:name="Ongoing",type="date",JSONPath=".stats.ongoing"
-//+kubebuilder:printcolumn:name="Up-to-date",type="date",JSONPath=".stats.ready"
-//+kubebuilder:printcolumn:name="Queued",type="date",JSONPath=".stats.queued"
-//+kubebuilder:printcolumn:name="Available",type="date",JSONPath=".stats.available"
+//+kubebuilder:printcolumn:name="Ongoing",type="integer",JSONPath=".status.ongoing"
+//+kubebuilder:printcolumn:name="Up-to-date",type="integer",JSONPath=".status.ready"
+//+kubebuilder:printcolumn:name="Queued",type="integer",JSONPath=".status.queued"
+//+kubebuilder:printcolumn:name="Available",type="integer",JSONPath=".status.available"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// NetworkConfig is the Schema for the node configuration.
+// NetworkConfigRevision is the Schema for the node configuration.
 type NetworkConfigRevision struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -60,15 +60,11 @@ type NetworkConfigRevision struct {
 
 //+kubebuilder:object:root=true
 
-// NetworkConfigList contains a list of NetworkConfig.
+// NetworkConfigRevisionList contains a list of NetworkConfigRevision.
 type NetworkConfigRevisionList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []NetworkConfigRevision `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&NetworkConfigRevision{}, &NetworkConfigRevisionList{})
 }
 
 func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
@@ -92,4 +88,8 @@ func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 		},
 		Status: NetworkConfigRevisionStatus{},
 	}, nil
+}
+
+func init() {
+	SchemeBuilder.Register(&NetworkConfigRevision{}, &NetworkConfigRevisionList{})
 }
