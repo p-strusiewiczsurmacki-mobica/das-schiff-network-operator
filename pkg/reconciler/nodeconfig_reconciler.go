@@ -32,11 +32,12 @@ const (
 
 // NodeConfigReconciler is responsible for creating NodeConfig objects.
 type NodeConfigReconciler struct {
-	logger    logr.Logger
-	debouncer *debounce.Debouncer
-	client    client.Client
-	timeout   time.Duration
-	scheme    *runtime.Scheme
+	logger      logr.Logger
+	debouncer   *debounce.Debouncer
+	client      client.Client
+	timeout     time.Duration
+	scheme      *runtime.Scheme
+	updateLimit int
 }
 
 // Reconcile starts reconciliation.
@@ -45,12 +46,13 @@ func (ncr *NodeConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // // NewNodeConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration, scheme *runtime.Scheme) (*NodeConfigReconciler, error) {
+func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration, scheme *runtime.Scheme, updateLimit int) (*NodeConfigReconciler, error) {
 	reconciler := &NodeConfigReconciler{
-		logger:  logger,
-		timeout: timeout,
-		client:  clusterClient,
-		scheme:  scheme,
+		logger:      logger,
+		timeout:     timeout,
+		client:      clusterClient,
+		scheme:      scheme,
+		updateLimit: updateLimit,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -94,11 +96,40 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	ready := 0
 	ongoing := 0
 	for i := range nodeConfigs.Items {
-		if nodeConfigs.Items[i].Spec.Revision == revisionToDeploy.Spec.Revision {
-			if nodeConfigs.Items[i].Status.ConfigStatus == StatusProvisioning {
-				ongoing++
+		// Every NodeNetworkConfig obejct should have 2 owner references - for NodeConfigRevision and for the Node. If there is only one owner reference,
+		// it means that either node or revision were deleted, so the config itself can be deleted as well.
+		if len(nodeConfigs.Items[i].ObjectMeta.OwnerReferences) < 2 {
+			if err := ncr.client.Delete(ctx, &nodeConfigs.Items[i]); err != nil {
+				return fmt.Errorf("error deleting redundant node config - %s: %w", nodeConfigs.Items[i].Name, err)
 			}
-			if nodeConfigs.Items[i].Status.ConfigStatus == StatusProvisioned {
+		}
+
+		ncr.logger.Info("config", "name", nodeConfigs.Items[i].Name, "status", nodeConfigs.Items[i].Status.ConfigStatus, "revision", nodeConfigs.Items[i].Spec.Revision[:10])
+		if nodeConfigs.Items[i].Spec.Revision == revisionToDeploy.Spec.Revision {
+			switch nodeConfigs.Items[i].Status.ConfigStatus {
+			case StatusInvalid:
+				ncr.logger.Info("status invalid action")
+				// One of the configs is invalid, tag revision as invalid.
+				revisionToDeploy.Status.IsInvalid = true
+				if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
+					return fmt.Errorf("error invalidating revision %s: %w", revisionToDeploy.Name, err)
+				}
+				return nil
+			case StatusProvisioning:
+				ncr.logger.Info("status provisioning action")
+				ongoing++
+				// If status is 'provisioning' check for how long this status is set already, and if time threshold is exceeded, tag config as invalid.
+				if time.Now().After(nodeConfigs.Items[i].Status.LastModification.Add(time.Minute * 2)) {
+					nodeConfigs.Items[i].Status.ConfigStatus = StatusInvalid
+					nodeConfigs.Items[i].Status.LastModification = metav1.Now()
+					if err := ncr.client.Status().Update(ctx, &nodeConfigs.Items[i]); err != nil {
+						return fmt.Errorf("error invalidating config: %w", err)
+					}
+					return nil
+				}
+			case StatusProvisioned:
+				ncr.logger.Info("status provisioned action")
+				// Update counters
 				ready++
 			}
 		}
@@ -120,81 +151,54 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	revisionToDeploy.Status.Available = available
 	revisionToDeploy.Status.Ready = ready
 	revisionToDeploy.Status.Ongoing = ongoing
-	revisionToDeploy.Status.Queued = available - ready
+	revisionToDeploy.Status.Queued = available - ready - ongoing
 
 	if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
 		return fmt.Errorf("error updating revision's status %s: %w", revisionToDeploy.Name, err)
 	}
 
-	if revisionToDeploy.Status.Ongoing == 0 && len(nodesToDeploy) > 0 {
+	if revisionToDeploy.Status.Ongoing < ncr.updateLimit && len(nodesToDeploy) > 0 {
 		if err := ncr.deployNodeConfig(ctx, nodesToDeploy[0], revisionToDeploy); err != nil {
 			return fmt.Errorf("error deploying node configurations: %w", err)
 		}
 	}
 
-	if revisionToDeploy.Status.Queued == 0 {
-		revisionToDeploy.Status.IsInvalid = false
-		if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
-			return fmt.Errorf("error validating revision %s: %w", revisionToDeploy.Name, err)
-		}
-	}
-
 	// remove all but last known valid revision
-	if err := ncr.revisionCleanup(ctx, revisionToDeploy); err != nil {
+	if err := ncr.revisionCleanup(ctx); err != nil {
 		return fmt.Errorf("error cleaning redundant revisions: %w", err)
 	}
 
 	return nil
 }
 
-func (ncr *NodeConfigReconciler) revisionCleanup(ctx context.Context, validRevision *v1alpha1.NetworkConfigRevision) error {
+func (ncr *NodeConfigReconciler) revisionCleanup(ctx context.Context) error {
 	revisions, err := listRevisions(ctx, ncr.client)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
 
-	// remove all but last known valid revision
-	for i := range revisions.Items {
-		if revisions.Items[i].Spec.Revision != validRevision.Spec.Revision {
-			if err := ncr.client.Delete(ctx, &revisions.Items[i]); err != nil {
-				if !apierrors.IsNotFound(err) {
-					return fmt.Errorf("error deleting revision %s: %w", revisions.Items[i].Name, err)
+	if len(revisions.Items) > 1 {
+		nodeConfigs := &v1alpha1.NodeNetworkConfigList{}
+		if err := ncr.client.List(ctx, nodeConfigs); err != nil {
+			return fmt.Errorf("error listing nodeConfigs")
+		}
+		if !revisions.Items[0].Status.IsInvalid && revisions.Items[0].Status.Ready == revisions.Items[0].Status.Available {
+			for i := 1; i < len(revisions.Items); i++ {
+				refCnt := 0
+				for j := range nodeConfigs.Items {
+					if nodeConfigs.Items[j].Spec.Revision == revisions.Items[i].Spec.Revision {
+						refCnt++
+					}
+				}
+				if refCnt == 0 {
+					if err := ncr.client.Delete(ctx, &revisions.Items[i]); err != nil {
+						return fmt.Errorf("error deletring revision %s: %w", revisions.Items[i].Name, err)
+					}
 				}
 			}
 		}
 	}
 
-	return nil
-}
-
-func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes []*corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
-	for _, node := range nodes {
-		newConfig, err := ncr.createConfigForNode(node, revision)
-		if err != nil {
-			return fmt.Errorf("error preparing config for node %s: %w", node.Name, err)
-		}
-		currentConfig := &v1alpha1.NodeNetworkConfig{}
-		if err := ncr.client.Get(ctx, types.NamespacedName{Name: node.Name}, currentConfig); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("error getting NodeNetworkConfig object for node %s: %w", node.Name, err)
-			}
-			currentConfig = nil
-		}
-		if currentConfig != nil && currentConfig.Spec.Revision == revision.Spec.Revision {
-			// current config is the same as current revision - skip
-			continue
-		}
-		if err := ncr.deployConfig(ctx, newConfig, currentConfig, node); err != nil {
-			if errors.Is(err, InvalidConfigError) || errors.Is(err, context.DeadlineExceeded) {
-				// revision results in invalid config or in context timeout - invalidate revision
-				revision.Status.IsInvalid = true
-				if err := ncr.client.Status().Update(ctx, revision); err != nil {
-					return fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
-				}
-			}
-			return fmt.Errorf("error deploying config for node %s: %w", node.Name, err)
-		}
-	}
 	return nil
 }
 
@@ -305,66 +309,32 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 }
 
 func (ncr *NodeConfigReconciler) deployConfig(ctx context.Context, newConfig, currentConfig *v1alpha1.NodeNetworkConfig, node *corev1.Node) error {
+	var cfg *v1alpha1.NodeNetworkConfig
 	if currentConfig != nil {
+		cfg = currentConfig
 		// there already is config for node - update
-		currentConfig.Spec = *newConfig.Spec.DeepCopy()
-		currentConfig.Status = *newConfig.Status.DeepCopy()
-		currentConfig.Name = node.Name
-		if err := ncr.client.Update(ctx, currentConfig); err != nil {
+		cfg.Spec = *newConfig.Spec.DeepCopy()
+		cfg.Status = *newConfig.Status.DeepCopy()
+		cfg.ObjectMeta.OwnerReferences = newConfig.ObjectMeta.OwnerReferences
+		cfg.Name = node.Name
+
+		if err := ncr.client.Update(ctx, cfg); err != nil {
 			return fmt.Errorf("error updating config for node %s: %w", node.Name, err)
 		}
+
 	} else {
+		cfg = newConfig
 		// there is no config for node - create one
-		if err := ncr.client.Create(ctx, newConfig); err != nil {
+		if err := ncr.client.Create(ctx, cfg); err != nil {
 			return fmt.Errorf("error creating config for node %s: %w", node.Name, err)
 		}
 	}
 
-	// timeoutCtx, cancel := context.WithTimeout(ctx, ncr.timeout)
-	// defer cancel()
-
-	// // wait for agent to set status to 'provisioning'
-	// if err := ncr.waitForConfig(timeoutCtx, newConfig, StatusProvisioning); err != nil {
-	// 	return fmt.Errorf("error waiting for config: %w", err)
-	// }
-
-	// // wait for agent to set status to 'provisioned'
-	// if err := ncr.waitForConfig(timeoutCtx, newConfig, StatusProvisioned); err != nil {
-	// 	return fmt.Errorf("error waiting for config: %w", err)
-	// }
+	if err := setStatus(ctx, ncr.client, cfg, ""); err != nil {
+		return fmt.Errorf("error setting config '%s' status: %w", cfg.Name, err)
+	}
 
 	return nil
-}
-
-func (ncr *NodeConfigReconciler) waitForConfig(ctx context.Context, config *v1alpha1.NodeNetworkConfig, expectedStatus string) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context done: %w", ctx.Err())
-		default:
-			if err := ncr.client.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
-				if apierrors.IsNotFound(err) {
-					continue
-				}
-				return fmt.Errorf("error updating API boject: %w", err)
-			}
-			// agent set status as expected - return
-			if config.Status.ConfigStatus == expectedStatus {
-				return nil
-			}
-
-			// return error if status is invalid
-			if config.Status.ConfigStatus == StatusInvalid {
-				return fmt.Errorf("node %s config error: %w", config.Name, InvalidConfigError)
-			}
-
-			node := &corev1.Node{}
-			if err := ncr.client.Get(ctx, types.NamespacedName{Name: config.Name}, node); apierrors.IsNotFound(err) {
-				// node was deleted - skip
-				return nil
-			}
-		}
-	}
 }
 
 func listNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {

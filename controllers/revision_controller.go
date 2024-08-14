@@ -19,15 +19,21 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	networkv1alpha1 "github.com/telekom/das-schiff-network-operator/api/v1alpha1"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	revisionRequeueTime = 1 * time.Minute
 )
 
 // NetworkConfigRevisionReconciler reconciles a NodeConfig object.
@@ -56,7 +62,7 @@ func (r *RevisionReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctr
 	// Run ReconcileDebounced through debouncer
 	r.Reconciler.Reconcile(ctx)
 
-	return ctrl.Result{RequeueAfter: requeueTime}, nil
+	return ctrl.Result{RequeueAfter: revisionRequeueTime}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -64,7 +70,7 @@ func (r *RevisionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&networkv1alpha1.NetworkConfigRevision{}).
 		Watches(&corev1.Node{}, &handler.EnqueueRequestForObject{}).
-		Owns(&networkv1alpha1.NodeNetworkConfig{}).
+		Owns(&networkv1alpha1.NodeNetworkConfig{}, builder.MatchEveryOwner).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)

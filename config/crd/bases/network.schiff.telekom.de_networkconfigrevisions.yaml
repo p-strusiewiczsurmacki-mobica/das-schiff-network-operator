@@ -20,25 +20,25 @@ spec:
     - jsonPath: .status.isInvalid
       name: Invalid
       type: string
-    - jsonPath: .stats.ongoing
+    - jsonPath: .status.ongoing
       name: Ongoing
-      type: date
-    - jsonPath: .stats.ready
+      type: integer
+    - jsonPath: .status.ready
       name: Up-to-date
-      type: date
-    - jsonPath: .stats.queued
+      type: integer
+    - jsonPath: .status.queued
       name: Queued
-      type: date
-    - jsonPath: .stats.available
+      type: integer
+    - jsonPath: .status.available
       name: Available
-      type: date
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: NetworkConfig is the Schema for the node configuration.
+        description: NetworkConfigRevision is the Schema for the node configuration.
         properties:
           apiVersion:
             description: |-
