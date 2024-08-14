@@ -32,7 +32,7 @@ import (
 
 const requeueTime = 10 * time.Minute
 
-// ConfigReconciler reconciles a Layer2NetworkConfiguration object.
+// ConfigReconciler reconciles a Layer2NetworkConfiguration, RoutingTable and VRFRouteConfiguration objects.
 type ConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

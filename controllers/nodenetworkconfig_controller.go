@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// NodeNetworkConfigReconciler reconciles a NodeConfig object.
+// NodeNetworkConfigReconciler reconciles a NodeNetworkConfig object.
 type NodeNetworkConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

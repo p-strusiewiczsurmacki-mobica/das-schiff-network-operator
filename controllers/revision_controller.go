@@ -36,7 +36,7 @@ const (
 	revisionRequeueTime = 1 * time.Minute
 )
 
-// NetworkConfigRevisionReconciler reconciles a NodeConfig object.
+// NetworkConfigRevisionReconciler reconciles a NetworkConfigRevision object.
 type RevisionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
