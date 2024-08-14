@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -27,14 +28,18 @@ const (
 	StatusProvisioned  = "provisioned"
 
 	controlPlaneLabel = "node-role.kubernetes.io/control-plane"
+	numOfRefs         = 2
+	configThreshold   = time.Minute * 2
 )
 
 // NodeConfigReconciler is responsible for creating NodeConfig objects.
 type NodeConfigReconciler struct {
-	logger    logr.Logger
-	debouncer *debounce.Debouncer
-	client    client.Client
-	timeout   time.Duration
+	logger      logr.Logger
+	debouncer   *debounce.Debouncer
+	client      client.Client
+	timeout     time.Duration
+	scheme      *runtime.Scheme
+	updateLimit int
 }
 
 // Reconcile starts reconciliation.
@@ -43,11 +48,13 @@ func (ncr *NodeConfigReconciler) Reconcile(ctx context.Context) {
 }
 
 // // NewNodeConfigReconciler creates new reconciler that creates NodeConfig objects.
-func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration) (*NodeConfigReconciler, error) {
+func NewNodeConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration, s *runtime.Scheme, updateLimit int) (*NodeConfigReconciler, error) {
 	reconciler := &NodeConfigReconciler{
-		logger:  logger,
-		timeout: timeout,
-		client:  clusterClient,
+		logger:      logger,
+		timeout:     timeout,
+		client:      clusterClient,
+		scheme:      s,
+		updateLimit: updateLimit,
 	}
 
 	reconciler.debouncer = debounce.NewDebouncer(reconciler.reconcileDebounced, defaultDebounceTime, logger)
@@ -61,14 +68,7 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
 
-	var revisionToDeploy *v1alpha1.NetworkConfigRevision
-	for i := range revisions.Items {
-		if revisions.Items[i].Status.IsInvalid {
-			continue
-		}
-		revisionToDeploy = &revisions.Items[i]
-		break
-	}
+	revisionToDeploy := getFirstValidRevision(revisions.Items)
 
 	// there is nothing to deploy - skip
 	if revisionToDeploy == nil {
@@ -76,80 +76,200 @@ func (ncr *NodeConfigReconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	nodes, err := listNodes(ctx, ncr.client)
-
 	if err != nil {
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	if err := ncr.deployNodeConfigs(ctx, nodes, revisionToDeploy); err != nil {
-		return fmt.Errorf("error deploying node configurations: %w", err)
+	nodeConfigs, err := ncr.listConfigs(ctx)
+	if err != nil {
+		return fmt.Errorf("error listing configs: %w", err)
 	}
 
-	revisionToDeploy.Status.IsInvalid = false
-	if err := ncr.client.Status().Update(ctx, revisionToDeploy); err != nil {
-		return fmt.Errorf("error validating revision %s: %w", revisionToDeploy.Name, err)
+	available := len(nodes)
+	ready := 0
+	ongoing := 0
+	shouldExit, err := ncr.processConfigs(ctx, nodeConfigs.Items, revisionToDeploy, &ready, &ongoing)
+	if err != nil {
+		return fmt.Errorf("error processing configs: %w", err)
+	}
+	if shouldExit {
+		return nil
+	}
+
+	nodesToDeploy := getNodesToDeploy(nodes, nodeConfigs.Items, revisionToDeploy)
+
+	if err := ncr.updateRevisionCounters(ctx, revisionToDeploy, available, ready, ongoing); err != nil {
+		return fmt.Errorf("error updating revision %s counters: %w", revisionToDeploy.Name, err)
+	}
+
+	if revisionToDeploy.Status.Ongoing < ncr.updateLimit && len(nodesToDeploy) > 0 {
+		if err := ncr.deployNodeConfig(ctx, nodesToDeploy[0], revisionToDeploy); err != nil {
+			return fmt.Errorf("error deploying node configurations: %w", err)
+		}
 	}
 
 	// remove all but last known valid revision
-	if err := ncr.revisionCleanup(ctx, revisionToDeploy); err != nil {
+	if err := ncr.revisionCleanup(ctx); err != nil {
 		return fmt.Errorf("error cleaning redundant revisions: %w", err)
 	}
 
 	return nil
 }
 
-func (ncr *NodeConfigReconciler) revisionCleanup(ctx context.Context, validRevision *v1alpha1.NetworkConfigRevision) error {
+func getFirstValidRevision(revisions []v1alpha1.NetworkConfigRevision) *v1alpha1.NetworkConfigRevision {
+	var result *v1alpha1.NetworkConfigRevision
+	for i := range revisions {
+		if revisions[i].Status.IsInvalid {
+			continue
+		}
+		result = &revisions[i]
+		break
+	}
+	return result
+}
+
+func (ncr *NodeConfigReconciler) processConfigs(ctx context.Context, configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision, ready, ongoing *int) (bool, error) {
+	for i := range configs {
+		// Every NodeNetworkConfig obejct should have 2 owner references - for NodeConfigRevision and for the Node. If there is only one owner reference,
+		// it means that either node or revision were deleted, so the config itself can be deleted as well.
+		if len(configs[i].ObjectMeta.OwnerReferences) < numOfRefs {
+			if err := ncr.client.Delete(ctx, &configs[i]); err != nil {
+				return true, fmt.Errorf("error deleting redundant node config - %s: %w", configs[i].Name, err)
+			}
+		}
+
+		if configs[i].Spec.Revision == revision.Spec.Revision {
+			switch configs[i].Status.ConfigStatus {
+			case StatusInvalid:
+				// One of the configs is invalid, tag revision as invalid.
+				revision.Status.IsInvalid = true
+				if err := ncr.client.Status().Update(ctx, revision); err != nil {
+					return true, fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
+				}
+				return true, nil
+			case StatusProvisioning:
+				// Update ongoing counter
+				*ongoing++
+				// If status is 'provisioning' check for how long this status is set already, and if time threshold is exceeded, tag config as invalid.
+				if time.Now().After(configs[i].Status.LastModification.Add(configThreshold)) {
+					configs[i].Status.ConfigStatus = StatusInvalid
+					configs[i].Status.LastModification = metav1.Now()
+					if err := ncr.client.Status().Update(ctx, &configs[i]); err != nil {
+						return true, fmt.Errorf("error invalidating config: %w", err)
+					}
+					return true, nil
+				}
+			case StatusProvisioned:
+				// Update ready counter
+				*ready++
+			}
+		}
+	}
+	return false, nil
+}
+
+func getNodesToDeploy(nodes map[string]*corev1.Node, configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision) []*corev1.Node {
+	for nodeName := range nodes {
+		for i := range configs {
+			if configs[i].Name == nodeName && configs[i].Spec.Revision == revision.Spec.Revision {
+				delete(nodes, nodeName)
+				break
+			}
+		}
+	}
+
+	nodesToDeploy := []*corev1.Node{}
+	for _, node := range nodes {
+		nodesToDeploy = append(nodesToDeploy, node)
+	}
+	return nodesToDeploy
+}
+
+func (ncr *NodeConfigReconciler) updateRevisionCounters(ctx context.Context, revision *v1alpha1.NetworkConfigRevision, available, ready, ongoing int) error {
+	revision.Status.Available = available
+	revision.Status.Ready = ready
+	revision.Status.Ongoing = ongoing
+	revision.Status.Queued = available - ready - ongoing
+
+	if err := ncr.client.Status().Update(ctx, revision); err != nil {
+		return fmt.Errorf("error updating revision's status %s: %w", revision.Name, err)
+	}
+	return nil
+}
+
+func (ncr *NodeConfigReconciler) revisionCleanup(ctx context.Context) error {
 	revisions, err := listRevisions(ctx, ncr.client)
 	if err != nil {
 		return fmt.Errorf("error listing revisions: %w", err)
 	}
 
-	// remove all but last known valid revision
-	for i := range revisions.Items {
-		if revisions.Items[i].Spec.Revision != validRevision.Spec.Revision {
-			if err := ncr.client.Delete(ctx, &revisions.Items[i]); err != nil {
-				if !apierrors.IsNotFound(err) {
-					return fmt.Errorf("error deleting revision %s: %w", revisions.Items[i].Name, err)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func (ncr *NodeConfigReconciler) deployNodeConfigs(ctx context.Context, nodes []*corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
-	for _, node := range nodes {
-		newConfig, err := createConfigForNode(node, revision)
+	if len(revisions.Items) > 1 {
+		nodeConfigs, err := ncr.listConfigs(ctx)
 		if err != nil {
-			return fmt.Errorf("error preparing config for node %s: %w", node.Name, err)
+			return fmt.Errorf("error listing configs: %w", err)
 		}
-		currentConfig := &v1alpha1.NodeNetworkConfig{}
-		if err := ncr.client.Get(ctx, types.NamespacedName{Name: node.Name}, currentConfig); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("error getting NodeNetworkConfig object for node %s: %w", node.Name, err)
-			}
-			currentConfig = nil
-		}
-		if currentConfig != nil && currentConfig.Spec.Revision == revision.Spec.Revision {
-			// current config is the same as current revision - skip
-			continue
-		}
-		if err := ncr.deployConfig(ctx, newConfig, currentConfig, node); err != nil {
-			if errors.Is(err, InvalidConfigError) || errors.Is(err, context.DeadlineExceeded) {
-				// revision results in invalid config or in context timeout - invalidate revision
-				revision.Status.IsInvalid = true
-				if err := ncr.client.Status().Update(ctx, revision); err != nil {
-					return fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
+		if !revisions.Items[0].Status.IsInvalid && revisions.Items[0].Status.Ready == revisions.Items[0].Status.Available {
+			for i := 1; i < len(revisions.Items); i++ {
+				if countReferences(&revisions.Items[i], nodeConfigs.Items) == 0 {
+					if err := ncr.client.Delete(ctx, &revisions.Items[i]); err != nil {
+						return fmt.Errorf("error deletring revision %s: %w", revisions.Items[i].Name, err)
+					}
 				}
 			}
-			return fmt.Errorf("error deploying config for node %s: %w", node.Name, err)
 		}
+	}
+
+	return nil
+}
+
+func countReferences(revision *v1alpha1.NetworkConfigRevision, configs []v1alpha1.NodeNetworkConfig) int {
+	refCnt := 0
+	for j := range configs {
+		if configs[j].Spec.Revision == revision.Spec.Revision {
+			refCnt++
+		}
+	}
+	return refCnt
+}
+
+func (ncr *NodeConfigReconciler) listConfigs(ctx context.Context) (*v1alpha1.NodeNetworkConfigList, error) {
+	nodeConfigs := &v1alpha1.NodeNetworkConfigList{}
+	if err := ncr.client.List(ctx, nodeConfigs); err != nil {
+		return nil, fmt.Errorf("error listing nodeConfigs: %w", err)
+	}
+	return nodeConfigs, nil
+}
+
+func (ncr *NodeConfigReconciler) deployNodeConfig(ctx context.Context, node *corev1.Node, revision *v1alpha1.NetworkConfigRevision) error {
+	newConfig, err := ncr.createConfigForNode(node, revision)
+	if err != nil {
+		return fmt.Errorf("error preparing config for node %s: %w", node.Name, err)
+	}
+	currentConfig := &v1alpha1.NodeNetworkConfig{}
+	if err := ncr.client.Get(ctx, types.NamespacedName{Name: node.Name}, currentConfig); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error getting NodeNetworkConfig object for node %s: %w", node.Name, err)
+		}
+		currentConfig = nil
+	}
+	if currentConfig != nil && currentConfig.Spec.Revision == revision.Spec.Revision {
+		// current config is the same as current revision - skip
+		return nil
+	}
+	if err := ncr.deployConfig(ctx, newConfig, currentConfig, node); err != nil {
+		if errors.Is(err, InvalidConfigError) || errors.Is(err, context.DeadlineExceeded) {
+			// revision results in invalid config or in context timeout - invalidate revision
+			revision.Status.IsInvalid = true
+			if err := ncr.client.Status().Update(ctx, revision); err != nil {
+				return fmt.Errorf("error invalidating revision %s: %w", revision.Name, err)
+			}
+		}
+		return fmt.Errorf("error deploying config for node %s: %w", node.Name, err)
 	}
 	return nil
 }
 
-func createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevision) (*v1alpha1.NodeNetworkConfig, error) {
+func (ncr *NodeConfigReconciler) createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevision) (*v1alpha1.NodeNetworkConfig, error) {
 	// create new config
 	c := &v1alpha1.NodeNetworkConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -161,9 +281,12 @@ func createConfigForNode(node *corev1.Node, revision *v1alpha1.NetworkConfigRevi
 	c.Spec.Revision = revision.Spec.Revision
 	c.Name = node.Name
 
-	err := controllerutil.SetOwnerReference(node, c, scheme.Scheme)
-	if err != nil {
-		return nil, fmt.Errorf("error setting owner references: %w", err)
+	if err := controllerutil.SetOwnerReference(node, c, scheme.Scheme); err != nil {
+		return nil, fmt.Errorf("error setting owner references (node): %w", err)
+	}
+
+	if err := controllerutil.SetOwnerReference(revision, c, ncr.scheme); err != nil {
+		return nil, fmt.Errorf("error setting owner references (revision): %w", err)
 	}
 
 	// prepare Layer2NetworkConfigurationSpec (l2Spec) for each node.
@@ -223,69 +346,33 @@ func convertSelector(matchLabels map[string]string, matchExpressions []metav1.La
 }
 
 func (ncr *NodeConfigReconciler) deployConfig(ctx context.Context, newConfig, currentConfig *v1alpha1.NodeNetworkConfig, node *corev1.Node) error {
+	var cfg *v1alpha1.NodeNetworkConfig
 	if currentConfig != nil {
+		cfg = currentConfig
 		// there already is config for node - update
-		currentConfig.Spec = *newConfig.Spec.DeepCopy()
-		currentConfig.Status = *newConfig.Status.DeepCopy()
-		currentConfig.Name = node.Name
-		if err := ncr.client.Update(ctx, currentConfig); err != nil {
+		cfg.Spec = *newConfig.Spec.DeepCopy()
+		cfg.Status = *newConfig.Status.DeepCopy()
+		cfg.ObjectMeta.OwnerReferences = newConfig.ObjectMeta.OwnerReferences
+		cfg.Name = node.Name
+		if err := ncr.client.Update(ctx, cfg); err != nil {
 			return fmt.Errorf("error updating config for node %s: %w", node.Name, err)
 		}
 	} else {
+		cfg = newConfig
 		// there is no config for node - create one
-		if err := ncr.client.Create(ctx, newConfig); err != nil {
+		if err := ncr.client.Create(ctx, cfg); err != nil {
 			return fmt.Errorf("error creating config for node %s: %w", node.Name, err)
 		}
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, ncr.timeout)
-	defer cancel()
-
-	// wait for agent to set status to 'provisioning'
-	if err := ncr.waitForConfig(timeoutCtx, newConfig, StatusProvisioning); err != nil {
-		return fmt.Errorf("error waiting for config: %w", err)
-	}
-
-	// wait for agent to set status to 'provisioned'
-	if err := ncr.waitForConfig(timeoutCtx, newConfig, StatusProvisioned); err != nil {
-		return fmt.Errorf("error waiting for config: %w", err)
+	if err := setStatus(ctx, ncr.client, cfg, ""); err != nil {
+		return fmt.Errorf("error setting config '%s' status: %w", cfg.Name, err)
 	}
 
 	return nil
 }
 
-func (ncr *NodeConfigReconciler) waitForConfig(ctx context.Context, config *v1alpha1.NodeNetworkConfig, expectedStatus string) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context done: %w", ctx.Err())
-		default:
-			if err := ncr.client.Get(ctx, client.ObjectKeyFromObject(config), config); err != nil {
-				if apierrors.IsNotFound(err) {
-					continue
-				}
-				return fmt.Errorf("error updating API boject: %w", err)
-			}
-			// agent set status as expected - return
-			if config.Status.ConfigStatus == expectedStatus {
-				return nil
-			}
-
-			// return error if status is invalid
-			if config.Status.ConfigStatus == StatusInvalid {
-				return fmt.Errorf("node %s config error: %w", config.Name, InvalidConfigError)
-			}
-
-			node := &corev1.Node{}
-			if err := ncr.client.Get(ctx, types.NamespacedName{Name: config.Name}, node); apierrors.IsNotFound(err) {
-				// node was deleted - skip
-				return nil
-			}
-		}
-	}
-}
-
-func listNodes(ctx context.Context, c client.Client) ([]*corev1.Node, error) {
+func listNodes(ctx context.Context, c client.Client) (map[string]*corev1.Node, error) {
 	// list all nodes
 	list := &corev1.NodeList{}
 	if err := c.List(ctx, list); err != nil {
@@ -293,7 +380,7 @@ func listNodes(ctx context.Context, c client.Client) ([]*corev1.Node, error) {
 	}
 
 	// discard control-plane and not-ready nodes
-	nodes := []*corev1.Node{}
+	nodes := map[string]*corev1.Node{}
 	for i := range list.Items {
 		_, isControlPlane := list.Items[i].Labels[controlPlaneLabel]
 		if !isControlPlane {
@@ -302,7 +389,7 @@ func listNodes(ctx context.Context, c client.Client) ([]*corev1.Node, error) {
 				// TODO: Should taint node.kubernetes.io/not-ready be used instead of Conditions?
 				if list.Items[i].Status.Conditions[j].Type == corev1.NodeReady &&
 					list.Items[i].Status.Conditions[j].Status == corev1.ConditionTrue {
-					nodes = append(nodes, &list.Items[i])
+					nodes[list.Items[i].Name] = &list.Items[i]
 					break
 				}
 			}

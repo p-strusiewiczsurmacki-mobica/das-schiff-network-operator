@@ -32,7 +32,8 @@ type NodeNetworkConfigSpec struct {
 
 // NodeNetworkConfigStatus defines the observed state of NodeConfig.
 type NodeNetworkConfigStatus struct {
-	ConfigStatus string `json:"configStatus"`
+	ConfigStatus     string      `json:"configStatus"`
+	LastModification metav1.Time `json:"lastModification"`
 }
 
 //+kubebuilder:object:root=true

@@ -36,7 +36,7 @@ func (cr *ConfigReconciler) Reconcile(ctx context.Context) {
 	cr.debouncer.Debounce(ctx)
 }
 
-// // NewConfigReconciler creates new reconciler that creates NodeConfig objects.
+// // NewConfigReconciler creates new reconciler that creates NetworkConfigRevision objects.
 func NewConfigReconciler(clusterClient client.Client, logger logr.Logger, timeout time.Duration) (*ConfigReconciler, error) {
 	reconciler := &ConfigReconciler{
 		logger:  logger,
@@ -85,12 +85,30 @@ func (cr *ConfigReconciler) ReconcileDebounced(ctx context.Context) error {
 		return nil
 	}
 
+	if err := cleanRevisionStatus(ctx, revision, r.client); err != nil {
+		return fmt.Errorf("error setting clean revision status: %w", err)
+	}
+
 	// create revision object
 	if err := r.createRevision(timeoutCtx, revision); err != nil {
 		return fmt.Errorf("error creating revision %s: %w", revision.Spec.Revision, err)
 	}
 
 	cr.logger.Info("deployed", "revision", revision.Spec.Revision)
+	return nil
+}
+
+func cleanRevisionStatus(ctx context.Context, revision *v1alpha1.NetworkConfigRevision, c client.Client) error {
+	nodes, err := listNodes(ctx, c)
+	if err != nil {
+		return fmt.Errorf("error listing nodes: %w", err)
+	}
+
+	revision.Status.Available = len(nodes)
+	revision.Status.Queued = len(nodes)
+	revision.Status.Ongoing = 0
+	revision.Status.Ready = 0
+
 	return nil
 }
 
@@ -115,12 +133,12 @@ func (r *reconcileConfig) createRevision(ctx context.Context, revision *v1alpha1
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("error creating NodeConfigRevision: %w", err)
 		}
-		if err := r.client.Delete(ctx, revision); err != nil {
-			return fmt.Errorf("error creating deleting already existing NodeConfigRevision: %w", err)
+		if err := r.client.Update(ctx, revision); err != nil {
+			return fmt.Errorf("error updating NodeConfigRevision: %w", err)
 		}
-		if err := r.client.Create(ctx, revision); err != nil {
-			return fmt.Errorf("error creating NodeConfigRevision: %w", err)
-		}
+	}
+	if err := r.client.Status().Update(ctx, revision); err != nil {
+		return fmt.Errorf("error updating NodeConfigRevision status: %w", err)
 	}
 	return nil
 }

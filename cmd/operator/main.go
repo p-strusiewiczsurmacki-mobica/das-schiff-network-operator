@@ -58,12 +58,14 @@ func init() {
 func main() {
 	var configFile string
 	var timeout string
+	var updateLimit int
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
 			"Command-line flags override configuration from this file.")
 	flag.StringVar(&timeout, "timeout", reconciler.DefaultTimeout,
 		"Timeout for Kubernetes API connections (default: 60s).")
+	flag.IntVar(&updateLimit, "update-limit", 1, "Configures how many nodes can be updated simultaneously when rolling update is performed.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -84,7 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = setupReconcilers(mgr, timeout)
+	err = setupReconcilers(mgr, timeout, updateLimit)
 	if err != nil {
 		setupLog.Error(err, "unable to setup reconcilers")
 		os.Exit(1)
@@ -97,7 +99,7 @@ func main() {
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, timeout string) error {
+func setupReconcilers(mgr manager.Manager, timeout string, updateLimit int) error {
 	timoutVal, err := time.ParseDuration(timeout)
 	if err != nil {
 		return fmt.Errorf("error parsing timeout value %s: %w", timeout, err)
@@ -108,7 +110,7 @@ func setupReconcilers(mgr manager.Manager, timeout string) error {
 		return fmt.Errorf("unable to create config reconciler reconciler: %w", err)
 	}
 
-	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal)
+	ncr, err := reconciler.NewNodeConfigReconciler(mgr.GetClient(), mgr.GetLogger().WithName("NodeConfigReconciler"), timoutVal, mgr.GetScheme(), updateLimit)
 	if err != nil {
 		return fmt.Errorf("unable to create node reconciler: %w", err)
 	}
@@ -118,39 +120,15 @@ func setupReconcilers(mgr manager.Manager, timeout string) error {
 		return fmt.Errorf("error adding on leader election event to the manager: %w", err)
 	}
 
-	if err = (&controllers.VRFRouteConfigurationReconciler{
+	if err = (&controllers.ConfigReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: cr,
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create VRFRouteConfiguration controller: %w", err)
+		return fmt.Errorf("unable to create Config controller: %w", err)
 	}
 
-	if err = (&controllers.Layer2NetworkConfigurationReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: cr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create Layer2NetworkConfiguration controller: %w", err)
-	}
-
-	if err = (&controllers.RoutingTableReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: cr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
-	}
-
-	if err = (&controllers.NodeReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: ncr,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
-	}
-
-	if err = (&controllers.NetworkConfigRevisionReconciler{
+	if err = (&controllers.RevisionReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: ncr,
