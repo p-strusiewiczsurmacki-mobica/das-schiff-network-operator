@@ -85,9 +85,9 @@ func (cr *ConfigReconciler) ReconcileDebounced(ctx context.Context) error {
 		return nil
 	}
 
-	if err := cleanRevisionStatus(ctx, revision, r.client); err != nil {
-		return fmt.Errorf("error setting clean revision status: %w", err)
-	}
+	// if err := cleanRevisionStatus(ctx, revision, r.client); err != nil {
+	// 	return fmt.Errorf("error setting clean revision status: %w", err)
+	// }
 
 	// create revision object
 	if err := r.createRevision(timeoutCtx, revision); err != nil {
@@ -147,9 +147,9 @@ func (r *reconcileConfig) createRevision(ctx context.Context, revision *v1alpha1
 			return fmt.Errorf("error updating NodeConfigRevision: %w", err)
 		}
 	}
-	if err := r.client.Status().Update(ctx, revision); err != nil {
-		return fmt.Errorf("error updating NodeConfigRevision status: %w", err)
-	}
+	// if err := r.client.Status().Update(ctx, revision); err != nil {
+	// 	return fmt.Errorf("error updating NodeConfigRevision status: %w", err)
+	// }
 	return nil
 }
 

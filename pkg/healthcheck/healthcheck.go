@@ -154,7 +154,7 @@ func (hc *HealthChecker) CheckReachability() error {
 
 // CheckAPIServer checks if Kubernetes Api server is reachable from the pod.
 func (hc HealthChecker) CheckAPIServer(ctx context.Context) error {
-	if err := hc.client.List(ctx, &corev1.PodList{}); err != nil {
+	if err := hc.client.List(ctx, &corev1.NodeList{}); err != nil {
 		return fmt.Errorf("unable to reach API server: %w", err)
 	}
 	return nil

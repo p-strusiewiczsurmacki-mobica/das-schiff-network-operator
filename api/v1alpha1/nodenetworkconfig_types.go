@@ -17,14 +17,12 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"reflect"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // NodeNetworkConfigSpec defines the desired state of NodeConfig.
 type NodeNetworkConfigSpec struct {
-	// Revision stores hash of the NodeConfigRevision that was used to create the NodeNetwokrConfig obejct.
+	// Revision stores hash of the NodeConfigRevision that was used to create the NodeNetworkConfig object.
 	Revision     string                           `json:"revision"`
 	Layer2       []Layer2NetworkConfigurationSpec `json:"layer2"`
 	Vrf          []VRFRouteConfigurationSpec      `json:"vrf"`
@@ -61,10 +59,6 @@ type NodeNetworkConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []NodeNetworkConfig `json:"items"`
-}
-
-func (nc *NodeNetworkConfig) IsEqual(c *NodeNetworkConfig) bool {
-	return reflect.DeepEqual(nc.Spec.Layer2, c.Spec.Layer2) && reflect.DeepEqual(nc.Spec.Vrf, c.Spec.Vrf) && reflect.DeepEqual(nc.Spec.RoutingTable, c.Spec.RoutingTable)
 }
 
 func NewEmptyConfig(name string) *NodeNetworkConfig {

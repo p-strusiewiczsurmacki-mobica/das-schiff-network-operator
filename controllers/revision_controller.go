@@ -41,10 +41,9 @@ type RevisionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Reconciler *reconciler.NodeConfigReconciler
+	Reconciler *reconciler.ConfigRevisionReconciler
 }
 
-//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;update;watch
 
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=networkconfigrevisions,verbs=get;list;watch;create;update;patch;delete

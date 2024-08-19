@@ -142,7 +142,7 @@ spec:
                 type: array
               revision:
                 description: Revision stores hash of the NodeConfigRevision that was
-                  used to create the NodeNetwokrConfig obejct.
+                  used to create the NodeNetworkConfig object.
                 type: string
               routingTable:
                 items:

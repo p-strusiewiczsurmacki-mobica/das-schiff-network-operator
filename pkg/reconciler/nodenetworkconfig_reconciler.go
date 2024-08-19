@@ -23,7 +23,7 @@ import (
 const (
 	defaultDebounceTime = 1 * time.Second
 
-	DefaultNodeConfigPath = "/opt/network-operator/nodeConfig.yaml"
+	DefaultNodeConfigPath = "/opt/network-operator/current-config.yaml"
 	nodeConfigFilePerm    = 0o600
 )
 
@@ -139,7 +139,7 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 }
 
 func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
-	// set config status as provisioned (valid)
+	// set config status as provisioning
 	if err := setStatus(ctx, r.client, cfg, StatusProvisioning); err != nil {
 		return fmt.Errorf("error setting config status %s: %w", StatusProvisioning, err)
 	}
@@ -173,7 +173,6 @@ func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1a
 }
 
 func setStatus(ctx context.Context, c client.Client, cfg *v1alpha1.NodeNetworkConfig, status string) error {
-	// set config status as provisioned (valid)
 	cfg.Status.ConfigStatus = status
 	cfg.Status.LastUpdate = metav1.Now()
 	if err := c.Status().Update(ctx, cfg); err != nil {

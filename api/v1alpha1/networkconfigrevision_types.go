@@ -82,7 +82,7 @@ func NewRevision(config *NodeNetworkConfig) (*NetworkConfigRevision, error) {
 
 	h := sha256.New()
 	if _, err := h.Write(data); err != nil {
-		return nil, fmt.Errorf("error writing MD5 data: %w", err)
+		return nil, fmt.Errorf("failed hashing network config: %w", err)
 	}
 	hash := h.Sum(nil)
 	hashHex := hex.EncodeToString(hash)
