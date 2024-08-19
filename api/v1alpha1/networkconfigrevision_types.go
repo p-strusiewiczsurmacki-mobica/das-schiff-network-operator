@@ -27,16 +27,23 @@ import (
 
 // NetworkConfigSpec defines the desired state of NetworkConfig.
 type NetworkConfigRevisionSpec struct {
-	Config   NodeNetworkConfigSpec `json:"config"`
-	Revision string                `json:"revision"`
+	// Config stores global configuration of the nodes.
+	Config NodeNetworkConfigSpec `json:"config"`
+	// Revision is a hash of the NetworkConfigRevision object that is used to identify the particular revision.
+	Revision string `json:"revision"`
 }
 
 type NetworkConfigRevisionStatus struct {
+	// IsInvalid determines if NetworkConfigRevision results in misconfigured nodes (invalid configuration).
 	IsInvalid bool `json:"isInvalid"`
-	Ready     int  `json:"ready"`
-	Ongoing   int  `json:"ongoing"`
-	Queued    int  `json:"queued"`
-	Available int  `json:"available"`
+	// Ready informs about how many nodes were already provisioned with a config derived from the revision.
+	Ready int `json:"ready"`
+	// Ongoing informs about how many nodes are currently provisioned with a config derived from the revision.
+	Ongoing int `json:"ongoing"`
+	// Queued informs about how many nodes are currently waiting to be provisiined with a config derived from the revision.
+	Queued int `json:"queued"`
+	// Total informs about how many nodes in total can be provisiined with a config derived from the revision.
+	Total int `json:"total"`
 }
 
 //+kubebuilder:object:root=true
@@ -44,7 +51,7 @@ type NetworkConfigRevisionStatus struct {
 //+kubebuilder:resource:shortName=ncr,scope=Cluster
 //+kubebuilder:printcolumn:name="Invalid",type=string,JSONPath=`.status.isInvalid`
 //+kubebuilder:printcolumn:name="Ongoing",type="integer",JSONPath=".status.ongoing"
-//+kubebuilder:printcolumn:name="Up-to-date",type="integer",JSONPath=".status.ready"
+//+kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.ready"
 //+kubebuilder:printcolumn:name="Queued",type="integer",JSONPath=".status.queued"
 //+kubebuilder:printcolumn:name="Available",type="integer",JSONPath=".status.available"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

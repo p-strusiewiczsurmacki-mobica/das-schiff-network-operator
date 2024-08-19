@@ -174,7 +174,7 @@ func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1a
 func setStatus(ctx context.Context, c client.Client, cfg *v1alpha1.NodeNetworkConfig, status string) error {
 	// set config status as provisioned (valid)
 	cfg.Status.ConfigStatus = status
-	cfg.Status.LastModification = metav1.Now()
+	cfg.Status.LastUpdate = metav1.Now()
 	if err := c.Status().Update(ctx, cfg); err != nil {
 		return fmt.Errorf("error updating NodeConfig status: %w", err)
 	}

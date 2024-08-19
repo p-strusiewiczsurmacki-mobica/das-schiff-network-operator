@@ -104,7 +104,7 @@ func cleanRevisionStatus(ctx context.Context, revision *v1alpha1.NetworkConfigRe
 		return fmt.Errorf("error listing nodes: %w", err)
 	}
 
-	revision.Status.Available = len(nodes)
+	revision.Status.Total = len(nodes)
 	revision.Status.Queued = len(nodes)
 	revision.Status.Ongoing = 0
 	revision.Status.Ready = 0

@@ -24,7 +24,7 @@ spec:
       name: Ongoing
       type: integer
     - jsonPath: .status.ready
-      name: Up-to-date
+      name: Ready
       type: integer
     - jsonPath: .status.queued
       name: Queued
@@ -61,7 +61,7 @@ spec:
             description: NetworkConfigSpec defines the desired state of NetworkConfig.
             properties:
               config:
-                description: NodeNetworkConfigSpec defines the desired state of NodeConfig.
+                description: Config stores global configuration of the nodes.
                 properties:
                   layer2:
                     items:
@@ -156,6 +156,8 @@ spec:
                       type: object
                     type: array
                   revision:
+                    description: Revision stores hash of the NodeConfigRevision that
+                      was used to create the NodeNetwokrConfig obejct.
                     type: string
                   routingTable:
                     items:
@@ -276,6 +278,8 @@ spec:
                 - vrf
                 type: object
               revision:
+                description: Revision is a hash of the NetworkConfigRevision object
+                  that is used to identify the particular revision.
                 type: string
             required:
             - config
@@ -283,22 +287,32 @@ spec:
             type: object
           status:
             properties:
-              available:
-                type: integer
               isInvalid:
+                description: IsInvalid determines if NetworkConfigRevision results
+                  in misconfigured nodes (invalid configuration).
                 type: boolean
               ongoing:
+                description: Ongoing informs about how many nodes are currently provisioned
+                  with a config derived from the revision.
                 type: integer
               queued:
+                description: Queued informs about how many nodes are currently waiting
+                  to be provisiined with a config derived from the revision.
                 type: integer
               ready:
+                description: Ready informs about how many nodes were already provisioned
+                  with a config derived from the revision.
+                type: integer
+              total:
+                description: Total informs about how many nodes in total can be provisiined
+                  with a config derived from the revision.
                 type: integer
             required:
-            - available
             - isInvalid
             - ongoing
             - queued
             - ready
+            - total
             type: object
         type: object
     served: true

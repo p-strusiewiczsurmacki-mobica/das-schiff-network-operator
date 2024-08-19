@@ -24,6 +24,7 @@ import (
 
 // NodeNetworkConfigSpec defines the desired state of NodeConfig.
 type NodeNetworkConfigSpec struct {
+	// Revision stores hash of the NodeConfigRevision that was used to create the NodeNetwokrConfig obejct.
 	Revision     string                           `json:"revision"`
 	Layer2       []Layer2NetworkConfigurationSpec `json:"layer2"`
 	Vrf          []VRFRouteConfigurationSpec      `json:"vrf"`
@@ -32,8 +33,10 @@ type NodeNetworkConfigSpec struct {
 
 // NodeNetworkConfigStatus defines the observed state of NodeConfig.
 type NodeNetworkConfigStatus struct {
-	ConfigStatus     string      `json:"configStatus"`
-	LastModification metav1.Time `json:"lastModification"`
+	// ConfigStatus describes provisioning state od the NodeConfig. Can be either 'provisioning' or 'provisioned'.
+	ConfigStatus string `json:"configStatus"`
+	// LastUpdate determines when last update (change) of the ConfigStatus field took place.
+	LastUpdate metav1.Time `json:"lastUpdate"`
 }
 
 //+kubebuilder:object:root=true

@@ -141,6 +141,8 @@ spec:
                   type: object
                 type: array
               revision:
+                description: Revision stores hash of the NodeConfigRevision that was
+                  used to create the NodeNetwokrConfig obejct.
                 type: string
               routingTable:
                 items:
@@ -263,13 +265,17 @@ spec:
             description: NodeNetworkConfigStatus defines the observed state of NodeConfig.
             properties:
               configStatus:
+                description: ConfigStatus describes provisioning state od the NodeConfig.
+                  Can be either 'provisioning' or 'provisioned'.
                 type: string
-              lastModification:
+              lastUpdate:
+                description: LastUpdate determines when last update (change) of the
+                  ConfigStatus field took place.
                 format: date-time
                 type: string
             required:
             - configStatus
-            - lastModification
+            - lastUpdate
             type: object
         type: object
     served: true
