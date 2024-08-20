@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const requeueTime = 10 * time.Minute
@@ -67,11 +68,12 @@ func (r *ConfigReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	h := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request { return []ctrl.Request{{}} })
 	err := ctrl.NewControllerManagedBy(mgr).
 		Named("config controller").
-		Watches(&networkv1alpha1.Layer2NetworkConfiguration{}, &handler.EnqueueRequestForObject{}).
-		Watches(&networkv1alpha1.RoutingTable{}, &handler.EnqueueRequestForObject{}).
-		Watches(&networkv1alpha1.VRFRouteConfiguration{}, &handler.EnqueueRequestForObject{}).
+		Watches(&networkv1alpha1.Layer2NetworkConfiguration{}, h).
+		Watches(&networkv1alpha1.RoutingTable{}, h).
+		Watches(&networkv1alpha1.VRFRouteConfiguration{}, h).
 		Complete(r)
 	if err != nil {
 		return fmt.Errorf("error creating controller: %w", err)
