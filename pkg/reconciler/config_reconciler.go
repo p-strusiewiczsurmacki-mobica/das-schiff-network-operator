@@ -85,30 +85,12 @@ func (cr *ConfigReconciler) ReconcileDebounced(ctx context.Context) error {
 		return nil
 	}
 
-	// if err := cleanRevisionStatus(ctx, revision, r.client); err != nil {
-	// 	return fmt.Errorf("error setting clean revision status: %w", err)
-	// }
-
 	// create revision object
 	if err := r.createRevision(timeoutCtx, revision); err != nil {
 		return fmt.Errorf("error creating revision %s: %w", revision.Spec.Revision[0:10], err)
 	}
 
 	cr.logger.Info("deployed", "revision", revision.Spec.Revision)
-	return nil
-}
-
-func cleanRevisionStatus(ctx context.Context, revision *v1alpha1.NetworkConfigRevision, c client.Client) error {
-	nodes, err := listNodes(ctx, c)
-	if err != nil {
-		return fmt.Errorf("error listing nodes: %w", err)
-	}
-
-	revision.Status.Total = len(nodes)
-	revision.Status.Queued = len(nodes)
-	revision.Status.Ongoing = 0
-	revision.Status.Ready = 0
-
 	return nil
 }
 
@@ -143,13 +125,13 @@ func (r *reconcileConfig) createRevision(ctx context.Context, revision *v1alpha1
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("error creating NodeConfigRevision: %w", err)
 		}
-		if err := r.client.Update(ctx, revision); err != nil {
-			return fmt.Errorf("error updating NodeConfigRevision: %w", err)
+		if err := r.client.Delete(ctx, revision); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("error deleting old instance of revision %s: %w", revision.Name, err)
+		}
+		if err := r.client.Create(ctx, revision); err != nil {
+			return fmt.Errorf("error creating new instance of revision %s: %w", revision.Name, err)
 		}
 	}
-	// if err := r.client.Status().Update(ctx, revision); err != nil {
-	// 	return fmt.Errorf("error updating NodeConfigRevision status: %w", err)
-	// }
 	return nil
 }
 
@@ -202,7 +184,7 @@ func listRevisions(ctx context.Context, c client.Client) (*v1alpha1.NetworkConfi
 	// sort revisions by creation date ascending (newest first)
 	if len(revisions.Items) > 0 {
 		slices.SortFunc(revisions.Items, func(a, b v1alpha1.NetworkConfigRevision) int {
-			return b.ObjectMeta.CreationTimestamp.Compare(a.ObjectMeta.CreationTimestamp.Time) // newest first
+			return b.GetCreationTimestamp().Compare(a.GetCreationTimestamp().Time) // newest first
 		})
 	}
 
