@@ -128,7 +128,7 @@ func (crr *ConfigRevisionReconciler) processConfigsForRevision(ctx context.Conte
 	if err != nil {
 		return fmt.Errorf("failed to remove redundant configs: %w", err)
 	}
-	ready, ongoing, invalid := crr.getRevisionCounters(configs, revision)
+	ready, ongoing, invalid := getRevisionCounters(configs, revision)
 
 	if err := crr.updateRevisionCounters(ctx, revision, totalNodes, ready, ongoing); err != nil {
 		return fmt.Errorf("failed to update revision's %s counters: %w", revision.Name, err)
@@ -143,7 +143,7 @@ func (crr *ConfigRevisionReconciler) processConfigsForRevision(ctx context.Conte
 	return nil
 }
 
-func (crr *ConfigRevisionReconciler) getRevisionCounters(configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision) (ready, ongoing, invalid int) {
+func getRevisionCounters(configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision) (ready, ongoing, invalid int) {
 	ready = 0
 	ongoing = 0
 	invalid = 0
@@ -156,7 +156,7 @@ func (crr *ConfigRevisionReconciler) getRevisionCounters(configs []v1alpha1.Node
 			case StatusProvisioning, "":
 				// Update ongoing counter
 				ongoing++
-				if crr.wasConfigTimeoutReached(&configs[i]) {
+				if wasConfigTimeoutReached(&configs[i]) {
 					// If timout was reached revision is invalid (but still counts as ongoing).
 					invalid++
 				}
@@ -166,7 +166,7 @@ func (crr *ConfigRevisionReconciler) getRevisionCounters(configs []v1alpha1.Node
 			}
 		}
 	}
-	return
+	return ready, ongoing, invalid
 }
 
 func (crr *ConfigRevisionReconciler) removeRedundantConfigs(ctx context.Context, configs []v1alpha1.NodeNetworkConfig) ([]v1alpha1.NodeNetworkConfig, error) {
@@ -193,7 +193,7 @@ func (crr *ConfigRevisionReconciler) invalidateRevision(ctx context.Context, rev
 	return nil
 }
 
-func (crr *ConfigRevisionReconciler) wasConfigTimeoutReached(cfg *v1alpha1.NodeNetworkConfig) bool {
+func wasConfigTimeoutReached(cfg *v1alpha1.NodeNetworkConfig) bool {
 	return time.Now().After(cfg.Status.LastUpdate.Add(configTimeout))
 }
 
