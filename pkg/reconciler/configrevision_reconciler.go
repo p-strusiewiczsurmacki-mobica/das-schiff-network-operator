@@ -141,41 +141,66 @@ func (crr *ConfigRevisionReconciler) processConfigsForRevision(ctx context.Conte
 		return nil, fmt.Errorf("failed to remove redundant configs: %w", err)
 	}
 	ready, ongoing, invalid := getRevisionCounters(configs, revision)
-	cnt := &counters{ready: ready, ongoing: ongoing, invalid: invalid}
+	cnt := &counters{ready: len(ready), ongoing: len(ongoing), invalid: len(invalid)}
 
-	if invalid > 0 {
-		if err := crr.invalidateRevision(ctx, revision, "NetworkConfigRevision results in invalid config"); err != nil {
-			return cnt, fmt.Errorf("faild to invalidate revision %s: %w", revision.Name, err)
+	if len(invalid) > 0 {
+		for i := range invalid {
+			_, err := crr.isNodeReady(ctx, &invalid[i])
+			if err != nil && apierrors.IsNotFound(err) {
+				cnt.invalid--
+				cnt.ongoing--
+				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("failed to check node '%s' readiness status: %w", invalid[i].Name, err)
+			}
+			if err := crr.invalidateRevision(ctx, revision, "NetworkConfigRevision results in invalid config"); err != nil {
+				return cnt, fmt.Errorf("faild to invalidate revision %s: %w", revision.Name, err)
+			}
+			break
 		}
 	}
 
 	return cnt, nil
 }
 
-func getRevisionCounters(configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision) (ready, ongoing, invalid int) {
-	ready = 0
-	ongoing = 0
-	invalid = 0
+func (crr *ConfigRevisionReconciler) isNodeReady(ctx context.Context, config *v1alpha1.NodeNetworkConfig) (bool, error) {
+	node := &corev1.Node{}
+	if err := crr.client.Get(ctx, types.NamespacedName{Name: config.Name}, node, &client.GetOptions{}); err != nil {
+		return false, fmt.Errorf("failed to get node '%s': %w", config.Name, err)
+
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func getRevisionCounters(configs []v1alpha1.NodeNetworkConfig, revision *v1alpha1.NetworkConfigRevision) (ready, ongoing, invalid []v1alpha1.NodeNetworkConfig) {
+	ready = []v1alpha1.NodeNetworkConfig{}
+	ongoing = []v1alpha1.NodeNetworkConfig{}
+	invalid = []v1alpha1.NodeNetworkConfig{}
 	for i := range configs {
 		if configs[i].Spec.Revision == revision.Spec.Revision {
 			timeout := configTimeout
 			switch configs[i].Status.ConfigStatus {
 			case StatusProvisioned:
 				// Update ready counter
-				ready++
+				ready = append(ready, configs[i])
 			case StatusInvalid:
 				// Increase 'invalid' counter so we know that the revision results in invalid configs
-				invalid++
+				invalid = append(invalid, configs[i])
 			case "":
 				// Set longer timeout if status was not yet updated
 				timeout = preconfigTimeout
 				fallthrough
 			case StatusProvisioning:
 				// Update ongoing counter
-				ongoing++
+				ongoing = append(ongoing, configs[i])
 				if wasConfigTimeoutReached(&configs[i], timeout) {
 					// If timout was reached revision is invalid (but still counts as ongoing).
-					invalid++
+					invalid = append(invalid, configs[i])
 				}
 			}
 		}
