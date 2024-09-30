@@ -27,6 +27,10 @@ const (
 	NodeNetworkConfigFilePerm    = 0o600
 )
 
+type NodeNetworkConfigReconcilerAdapter interface {
+	Reconcile(ctx context.Context) error
+}
+
 type NodeNetworkConfigReconciler struct {
 	client                client.Client
 	netlinkManager        *nl.Manager
@@ -45,7 +49,7 @@ type reconcileNodeNetworkConfig struct {
 	logr.Logger
 }
 
-func NewNodeNetworkConfigReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeNetworkConfigPath string, frrManager frr.ManagerInterface, netlinkManager *nl.Manager) (*NodeNetworkConfigReconciler, error) {
+func NewNodeNetworkConfigReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeNetworkConfigPath string, frrManager frr.ManagerInterface, netlinkManager *nl.Manager) (NodeNetworkConfigReconcilerAdapter, error) {
 	reconciler := &NodeNetworkConfigReconciler{
 		client:                clusterClient,
 		netlinkManager:        netlinkManager,
@@ -280,4 +284,14 @@ func (reconciler *NodeNetworkConfigReconciler) checkHealth(ctx context.Context) 
 		}
 	}
 	return nil
+}
+
+type NodeNetworkConfigNetconfReconciler struct{}
+
+func NewNodeNetworkConfigNetconfReconciler() (NodeNetworkConfigReconcilerAdapter, error) {
+	return nil, errors.ErrUnsupported
+}
+
+func (*NodeNetworkConfigNetconfReconciler) Reconcile(context.Context) error {
+	return errors.ErrUnsupported
 }

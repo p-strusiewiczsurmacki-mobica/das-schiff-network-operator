@@ -39,7 +39,7 @@ type NodeNetworkConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Reconciler *reconciler.NodeNetworkConfigReconciler
+	Reconciler reconciler.NodeNetworkConfigReconcilerAdapter
 }
 
 //+kubebuilder:rbac:groups=network.schiff.telekom.de,resources=nodenetworkconfigs,verbs=get;list;watch;create;update;patch;delete
