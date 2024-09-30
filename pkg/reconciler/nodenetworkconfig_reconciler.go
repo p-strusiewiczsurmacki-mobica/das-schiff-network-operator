@@ -27,6 +27,10 @@ const (
 	NodeNetworkConfigFilePerm    = 0o600
 )
 
+type NewNodeNetworkConfigReconcilerAdapter interface {
+	Reconcile(ctx context.Context) error
+}
+
 type NodeNetworkConfigReconciler struct {
 	client                client.Client
 	netlinkManager        *nl.Manager
@@ -38,11 +42,6 @@ type NodeNetworkConfigReconciler struct {
 	NodeNetworkConfig     *v1alpha1.NodeNetworkConfig
 	NodeNetworkConfigPath string
 	dirtyFRRConfig        bool
-}
-
-type reconcileNodeNetworkConfig struct {
-	*NodeNetworkConfigReconciler
-	logr.Logger
 }
 
 func NewNodeNetworkConfigReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker, logger logr.Logger, nodeNetworkConfigPath string, frrManager frr.ManagerInterface, netlinkManager *nl.Manager) (*NodeNetworkConfigReconciler, error) {
@@ -90,12 +89,7 @@ func NewNodeNetworkConfigReconciler(clusterClient client.Client, anycastTracker 
 	return reconciler, nil
 }
 
-func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) error {
-	r := &reconcileNodeNetworkConfig{
-		NodeNetworkConfigReconciler: reconciler,
-		Logger:                      reconciler.logger,
-	}
-
+func (r *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) error {
 	if err := r.config.ReloadConfig(); err != nil {
 		return fmt.Errorf("error reloading network-operator config: %w", err)
 	}
@@ -112,7 +106,7 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 
 	if r.NodeNetworkConfig != nil && r.NodeNetworkConfig.Spec.Revision == cfg.Spec.Revision {
 		// replace in-memory working NodeNetworkConfig and store it on the disk
-		if err := reconciler.storeConfig(cfg, reconciler.NodeNetworkConfigPath); err != nil {
+		if err := r.storeConfig(cfg, r.NodeNetworkConfigPath); err != nil {
 			return fmt.Errorf("error saving NodeNetworkConfig status: %w", err)
 		}
 
@@ -136,14 +130,14 @@ func (reconciler *NodeNetworkConfigReconciler) Reconcile(ctx context.Context) er
 	}
 
 	// replace in-memory working NodeNetworkConfig and store it on the disk
-	if err := reconciler.storeConfig(cfg, reconciler.NodeNetworkConfigPath); err != nil {
+	if err := r.storeConfig(cfg, r.NodeNetworkConfigPath); err != nil {
 		return fmt.Errorf("error saving NodeNetworkConfig status: %w", err)
 	}
 
 	return nil
 }
 
-func (r *reconcileNodeNetworkConfig) processConfig(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
+func (r *NodeNetworkConfigReconciler) processConfig(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig) error {
 	// set NodeNetworkConfig status as provisioning
 	if err := setStatus(ctx, r.client, cfg, StatusProvisioning, r.logger); err != nil {
 		return fmt.Errorf("error setting NodeNetworkConfig status %s: %w", StatusProvisioning, err)
@@ -187,7 +181,7 @@ func setStatus(ctx context.Context, c client.Client, cfg *v1alpha1.NodeNetworkCo
 	return nil
 }
 
-func (r *reconcileNodeNetworkConfig) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig, reason string) error {
+func (r *NodeNetworkConfigReconciler) invalidateAndRestore(ctx context.Context, cfg *v1alpha1.NodeNetworkConfig, reason string) error {
 	r.logger.Info("invalidating NodeNetworkConfig", "name", cfg.Name, "reason", reason)
 	if err := setStatus(ctx, r.client, cfg, StatusInvalid, r.logger); err != nil {
 		return fmt.Errorf("error invalidating NodeNetworkConfig: %w", err)
@@ -202,7 +196,7 @@ func (r *reconcileNodeNetworkConfig) invalidateAndRestore(ctx context.Context, c
 	return nil
 }
 
-func doReconciliation(r *reconcileNodeNetworkConfig, nodeCfg *v1alpha1.NodeNetworkConfig) error {
+func doReconciliation(r *NodeNetworkConfigReconciler, nodeCfg *v1alpha1.NodeNetworkConfig) error {
 	r.logger.Info("config to reconcile", "NodeNetworkConfig", *nodeCfg)
 	l3vnis := nodeCfg.Spec.Vrf
 	l2vnis := nodeCfg.Spec.Layer2
@@ -218,7 +212,7 @@ func doReconciliation(r *reconcileNodeNetworkConfig, nodeCfg *v1alpha1.NodeNetwo
 	return nil
 }
 
-func (r *reconcileNodeNetworkConfig) restoreNodeNetworkConfig() error {
+func (r *NodeNetworkConfigReconciler) restoreNodeNetworkConfig() error {
 	if r.NodeNetworkConfig == nil {
 		return nil
 	}
@@ -245,10 +239,10 @@ func readNodeNetworkConfig(path string) (*v1alpha1.NodeNetworkConfig, error) {
 	return nodeNetworkConfig, nil
 }
 
-func (reconciler *NodeNetworkConfigReconciler) storeConfig(cfg *v1alpha1.NodeNetworkConfig, path string) error {
-	reconciler.NodeNetworkConfig = cfg
+func (r *NodeNetworkConfigReconciler) storeConfig(cfg *v1alpha1.NodeNetworkConfig, path string) error {
+	r.NodeNetworkConfig = cfg
 	// save working NodeNetworkConfig
-	c, err := json.MarshalIndent(*reconciler.NodeNetworkConfig, "", " ")
+	c, err := json.MarshalIndent(*r.NodeNetworkConfig, "", " ")
 	if err != nil {
 		panic(err)
 	}
@@ -260,22 +254,22 @@ func (reconciler *NodeNetworkConfigReconciler) storeConfig(cfg *v1alpha1.NodeNet
 	return nil
 }
 
-func (reconciler *NodeNetworkConfigReconciler) checkHealth(ctx context.Context) error {
-	_, err := reconciler.healthChecker.IsFRRActive()
+func (r *NodeNetworkConfigReconciler) checkHealth(ctx context.Context) error {
+	_, err := r.healthChecker.IsFRRActive()
 	if err != nil {
 		return fmt.Errorf("error checking FRR status: %w", err)
 	}
-	if err := reconciler.healthChecker.CheckInterfaces(); err != nil {
+	if err := r.healthChecker.CheckInterfaces(); err != nil {
 		return fmt.Errorf("error checking network interfaces: %w", err)
 	}
-	if err := reconciler.healthChecker.CheckReachability(); err != nil {
+	if err := r.healthChecker.CheckReachability(); err != nil {
 		return fmt.Errorf("error checking network reachability: %w", err)
 	}
-	if err := reconciler.healthChecker.CheckAPIServer(ctx); err != nil {
+	if err := r.healthChecker.CheckAPIServer(ctx); err != nil {
 		return fmt.Errorf("error checking API Server reachability: %w", err)
 	}
-	if !reconciler.healthChecker.TaintsRemoved() {
-		if err := reconciler.healthChecker.RemoveTaints(ctx); err != nil {
+	if !r.healthChecker.TaintsRemoved() {
+		if err := r.healthChecker.RemoveTaints(ctx); err != nil {
 			return fmt.Errorf("error removing taint from the node: %w", err)
 		}
 	}
