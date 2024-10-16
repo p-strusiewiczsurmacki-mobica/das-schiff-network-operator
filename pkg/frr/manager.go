@@ -9,6 +9,7 @@ import (
 	"os"
 	"text/template"
 
+	"github.com/go-logr/logr"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
 	"github.com/telekom/das-schiff-network-operator/pkg/frr/dbus"
 )
@@ -31,6 +32,7 @@ type Manager struct {
 	TemplatePath string
 	Cli          *Cli
 	dbusToolkit  dbus.System
+	logger       logr.Logger
 }
 
 type PrefixList struct {
@@ -65,12 +67,13 @@ type Configuration struct {
 	VRFs []VRFConfiguration
 }
 
-func NewFRRManager() *Manager {
+func NewFRRManager(logger logr.Logger) *Manager {
 	return &Manager{
 		ConfigPath:   "/etc/frr/frr.conf",
 		TemplatePath: "/etc/frr/frr.conf.tpl",
 		Cli:          NewCli(),
 		dbusToolkit:  &dbus.Toolkit{},
+		logger:       logger,
 	}
 }
 

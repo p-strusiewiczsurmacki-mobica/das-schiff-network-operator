@@ -41,7 +41,7 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 	reconciler := &Reconciler{
 		client:         clusterClient,
 		netlinkManager: nl.NewManager(&nl.Toolkit{}),
-		frrManager:     frr.NewFRRManager(),
+		frrManager:     frr.NewFRRManager(logger),
 		anycastTracker: anycastTracker,
 		logger:         logger,
 	}
@@ -57,7 +57,12 @@ func NewReconciler(clusterClient client.Client, anycastTracker *anycast.Tracker,
 	if val := os.Getenv("FRR_CONFIG_FILE"); val != "" {
 		reconciler.frrManager.ConfigPath = val
 	}
-	if err := reconciler.frrManager.Init(cfg.SkipVRFConfig[0]); err != nil {
+
+	mgmtIntf := "eth0"
+	if len(cfg.SkipVRFConfig) > 0 {
+		mgmtIntf = cfg.SkipVRFConfig[0]
+	}
+	if err := reconciler.frrManager.Init(mgmtIntf); err != nil {
 		return nil, fmt.Errorf("error trying to init FRR Manager: %w", err)
 	}
 
@@ -113,10 +118,10 @@ func (reconciler *Reconciler) reconcileDebounced(ctx context.Context) error {
 	}
 
 	if !reconciler.healthChecker.IsNetworkingHealthy() {
-		_, err := reconciler.healthChecker.IsFRRActive()
-		if err != nil {
-			return fmt.Errorf("error checking FRR status: %w", err)
-		}
+		// _, err := reconciler.healthChecker.IsFRRActive()
+		// if err != nil {
+		// 	return fmt.Errorf("error checking FRR status: %w", err)
+		// }
 		if err = reconciler.healthChecker.CheckInterfaces(); err != nil {
 			return fmt.Errorf("error checking network interfaces: %w", err)
 		}

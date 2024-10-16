@@ -56,20 +56,32 @@ func (m *Manager) Configure(in Configuration, nm *nl.Manager, nwopCfg *config.Co
 		return false, err
 	}
 
+	m.logger.Info("frrConfig", "value", frrConfig)
+
 	currentConfig, err := os.ReadFile(m.ConfigPath)
 	if err != nil {
 		return false, fmt.Errorf("error reading configuration file: %w", err)
 	}
+
+	m.logger.Info("currentConfig", "value", currentConfig)
 
 	targetConfig, err := render(m.configTemplate, frrConfig)
 	if err != nil {
 		return false, err
 	}
 
+	m.logger.Info("targetConfig 1", "value", targetConfig)
+
 	targetConfig = fixRouteTargetReload(targetConfig)
+
+	m.logger.Info("targetConfig 2", "value", targetConfig)
+
 	targetConfig = applyCfgReplacements(targetConfig, nwopCfg.Replacements)
 
+	m.logger.Info("targetConfig 3", "value", targetConfig)
+
 	if !bytes.Equal(currentConfig, targetConfig) {
+		m.logger.Info("write config")
 		err = os.WriteFile(m.ConfigPath, targetConfig, frrPermissions)
 		if err != nil {
 			return false, fmt.Errorf("error writing configuration file: %w", err)

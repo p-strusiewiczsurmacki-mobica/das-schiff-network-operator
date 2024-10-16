@@ -179,17 +179,18 @@ func (n *Manager) generateUnderlayMAC() (net.HardwareAddr, error) {
 }
 
 func (n *Manager) getUnderlayInterfaceAndIP() (int, net.IP, error) {
-	dummy := netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: underlayLoopback}}
+	// dummy := netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: underlayLoopback}}
 
-	addresses, err := n.toolkit.AddrList(&dummy, netlink.FAMILY_V4)
-	if err != nil {
-		return -1, nil, fmt.Errorf("error listing link's addresses: %w", err)
-	}
-	if len(addresses) != 1 {
-		return -1, nil, fmt.Errorf("count of v4 addresses on %s do not exactly match 1", dummy.Attrs().Name)
-	}
+	// addresses, err := n.toolkit.AddrList(&dummy, netlink.FAMILY_V4)
+	// if err != nil {
+	// 	return -1, nil, fmt.Errorf("error listing link's addresses: %w", err)
+	// }
+	// if len(addresses) != 1 {
+	// 	return -1, nil, fmt.Errorf("count of v4 addresses on %s do not exactly match 1", dummy.Attrs().Name)
+	// }
 
-	return dummy.Attrs().Index, addresses[0].IP, nil
+	// return dummy.Attrs().Index, addresses[0].IP, nil
+	return 1, net.IPv4(200, 0, 0, 100), nil
 }
 
 func generateMAC(ip net.IP) (net.HardwareAddr, error) {

@@ -152,7 +152,7 @@ func NewFRRCollector() (Collector, error) {
 			),
 			valueType: prometheus.CounterValue,
 		},
-		frr: frr.NewFRRManager(),
+		frr: frr.NewFRRManager(ctrl.Log.WithName("frr-manager")),
 	}
 
 	collector.name = frrCollectorName

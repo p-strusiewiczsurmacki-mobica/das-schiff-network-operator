@@ -7,6 +7,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/telekom/das-schiff-network-operator/pkg/config"
@@ -55,7 +56,7 @@ func TestFRR(t *testing.T) {
 var _ = Describe("frr", func() {
 	Context("NewFRRManager() should", func() {
 		It("create new FRR Manager", func() {
-			m := NewFRRManager()
+			m := NewFRRManager(logr.New(logr.Discard().GetSink()))
 			Expect(m).ToNot(BeNil())
 		})
 	})

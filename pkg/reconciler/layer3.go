@@ -40,10 +40,13 @@ func (r *reconcile) fetchTaas(ctx context.Context) ([]networkv1alpha1.RoutingTab
 
 // nolint: contextcheck // context is not relevant
 func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfiguration, taas []networkv1alpha1.RoutingTable) error {
+	r.logger.Info("l3vnis", "data", l3vnis)
 	vrfConfigMap, err := r.createVrfConfigMap(l3vnis)
 	if err != nil {
 		return err
 	}
+
+	r.logger.Info("vrfConfigMap", "data", vrfConfigMap)
 
 	vrfFromTaas := createVrfFromTaaS(taas)
 
@@ -65,6 +68,11 @@ func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurati
 		return allConfigs[i].VNI < allConfigs[j].VNI
 	})
 
+	err = r.configureFRR(allConfigs, false)
+	if err != nil {
+		return err
+	}
+
 	created, deletedVRF, err := r.reconcileL3Netlink(l3Configs)
 	if err != nil {
 		r.Logger.Error(err, "error reconciling Netlink")
@@ -78,16 +86,36 @@ func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurati
 	reloadTwice := deletedVRF || deletedTaas
 
 	// We wait here for two seconds to let FRR settle after updating netlink devices
-	time.Sleep(defaultSleep)
+	// time.Sleep(defaultSleep)
 
-	err = r.configureFRR(allConfigs, reloadTwice)
-	if err != nil {
-		return err
+	if reloadTwice {
+		if err := r.reloadFRR(); err != nil {
+			return fmt.Errorf("failed to reload FRR: %w", err)
+		}
 	}
 
+	// err = r.configureFRR(allConfigs, reloadTwice)
+	// if err != nil {
+	// 	return err
+	// }
+
 	// Make sure that all created netlink VRFs are up after FRR reload
-	time.Sleep(defaultSleep)
+	// for {
+	// 	allL3, err := r.netlinkManager.ListL3()
+	// 	if err != nil {
+	// 		return fmt.Errorf("faile to list L3 interfaces: %w", err)
+	// 	}
+	// 	r.logger.Info("waitning for interfaes to be", "allL3", len(allL3), "allCOnfigs", len(allConfigs))
+	// 	if len(allL3) == len(allConfigs) {
+	// 		break
+	// 	}
+
+	// 	time.Sleep(time.Millisecond * 100)
+	// }
+
+	// time.Sleep(defaultSleep)
 	for _, info := range created {
+		r.logger.Info("setting up", "infp", info)
 		if err := r.netlinkManager.UpL3(info); err != nil {
 			r.Logger.Error(err, "error setting L3 to state UP")
 			return fmt.Errorf("error setting L3 to state UP: %w", err)
@@ -97,6 +125,7 @@ func (r *reconcile) reconcileLayer3(l3vnis []networkv1alpha1.VRFRouteConfigurati
 }
 
 func (r *reconcile) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice bool) error {
+	r.logger.Info("configuring FRR", "configs", vrfConfigs)
 	changed, err := r.frrManager.Configure(frr.Configuration{
 		VRFs: vrfConfigs,
 		ASN:  r.config.ServerASN,
@@ -107,6 +136,12 @@ func (r *reconcile) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice 
 	}
 
 	if changed || r.dirtyFRRConfig {
+		if changed {
+			r.logger.Info("FRR reload needed - changed")
+		}
+		if r.dirtyFRRConfig {
+			r.logger.Info("FRR reload needed - dirty config")
+		}
 		err := r.reloadFRR()
 		if err != nil {
 			r.dirtyFRRConfig = true
@@ -116,6 +151,7 @@ func (r *reconcile) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice 
 		// When a BGP VRF is deleted there is a leftover running configuration after reload
 		// A second reload fixes this.
 		if reloadTwice {
+			r.logger.Info("second reload")
 			err := r.reloadFRR()
 			if err != nil {
 				r.dirtyFRRConfig = true
@@ -123,6 +159,8 @@ func (r *reconcile) configureFRR(vrfConfigs []frr.VRFConfiguration, reloadTwice 
 			}
 		}
 		r.dirtyFRRConfig = false
+	} else {
+		r.logger.Info("no FRR reload needed")
 	}
 	return nil
 }
@@ -133,6 +171,7 @@ func (r *reconcile) reloadFRR() error {
 	if err != nil {
 		r.Logger.Error(err, "error reloading FRR systemd unit, trying restart")
 
+		r.Logger.Info("Restarting FRR")
 		err = r.frrManager.RestartFRR()
 		if err != nil {
 			r.Logger.Error(err, "error restarting FRR systemd unit")
@@ -167,11 +206,19 @@ func (r *reconcile) createVrfConfigMap(l3vnis []networkv1alpha1.VRFRouteConfigur
 			continue
 		}
 
-		if vni == 0 && vni > 16777215 {
-			err := fmt.Errorf("VNI can not be set to 0")
-			r.Logger.Error(err, "VNI can not be set to 0, ignoring", "vrf", spec.VRF, "name", l3vnis[i].ObjectMeta.Name, "namespace", l3vnis[i].ObjectMeta.Namespace)
+		var err error
+		if vni == 0 {
+			err = fmt.Errorf("VNI can not be set to 0")
+		} else if vni > 16777215 {
+			err = fmt.Errorf("VNI can not be set to value over 16777215")
+		}
+
+		if err != nil {
+			r.Logger.Error(err, fmt.Sprintf("VNI can not be set to %d, ignoring", vni), "vrf", spec.VRF, "name", l3vnis[i].ObjectMeta.Name, "namespace", l3vnis[i].ObjectMeta.Namespace)
 			continue
 		}
+
+		r.logger.Info("len of aggregate", "len", len(spec.Aggregate))
 
 		cfg, err := createVrfConfig(vrfConfigMap, &spec, vni, rt)
 		if err != nil {
@@ -228,15 +275,17 @@ func createVrfConfig(vrfConfigMap map[string]frr.VRFConfiguration, spec *network
 		}
 		cfg.Import = append(cfg.Import, prefixList)
 	}
-	for _, aggregate := range spec.Aggregate {
-		_, network, err := net.ParseCIDR(aggregate)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing CIDR %s: %w", aggregate, err)
-		}
-		if network.IP.To4() == nil {
-			cfg.AggregateIPv6 = append(cfg.AggregateIPv6, aggregate)
-		} else {
-			cfg.AggregateIPv4 = append(cfg.AggregateIPv4, aggregate)
+	if len(spec.Aggregate) > 0 {
+		for _, aggregate := range spec.Aggregate {
+			_, network, err := net.ParseCIDR(aggregate)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing CIDR %s: %w", aggregate, err)
+			}
+			if network.IP.To4() == nil {
+				cfg.AggregateIPv6 = append(cfg.AggregateIPv6, aggregate)
+			} else {
+				cfg.AggregateIPv4 = append(cfg.AggregateIPv4, aggregate)
+			}
 		}
 	}
 	return &cfg, nil

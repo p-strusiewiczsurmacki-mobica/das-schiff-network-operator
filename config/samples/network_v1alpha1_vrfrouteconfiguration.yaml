@@ -4,3 +4,7 @@ metadata:
   name: vrfrouteconfiguration-sample
 spec:
   # TODO(user): Add fields here
+  vrf: test
+  import: []
+  export: []
+  seq: 100

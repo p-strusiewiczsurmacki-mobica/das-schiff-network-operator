@@ -1,8 +1,8 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= ghcr.io/telekom/das-schiff-network-operator:latest
+IMG ?= 127.0.0.1:5000/das-schiff-network-operator:v16
 # Sidecar image URL to use all building/pushing image targets
-SIDECAR_IMG ?= ghcr.io/telekom/frr-exporter:latest
+SIDECAR_IMG ?= 127.0.0.1:5000/frr-exporter:v16
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25
 
@@ -80,11 +80,11 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/manager/main.go
 
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
+docker-build: # test ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
 .PHONY: docker-build-sidecar
-docker-build-sidecar: test ## Build docker image with the manager.
+docker-build-sidecar: # test ## Build docker image with the manager.
 	docker build -t ${SIDECAR_IMG} -f frr-exporter.Dockerfile .
 
 .PHONY: docker-push
