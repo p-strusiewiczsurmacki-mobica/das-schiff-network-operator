@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
@@ -68,8 +69,10 @@ func prepareManagerOptions(cfg *Config, scheme *runtime.Scheme) manager.Options 
 	return manager.Options{
 		Scheme:                 scheme,
 		HealthProbeBindAddress: cfg.Health.HealthProbeBindAddress,
-		MetricsBindAddress:     cfg.Metrics.BindAddress,
-		PprofBindAddress:       cfg.Pprof.BindAddress,
+		Metrics: server.Options{
+			BindAddress: cfg.Metrics.BindAddress,
+		},
+		PprofBindAddress: cfg.Pprof.BindAddress,
 		WebhookServer: &webhook.DefaultServer{
 			Options: webhook.Options{
 				Port: cfg.Webhook.Port,

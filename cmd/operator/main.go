@@ -21,13 +21,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	operator2 "github.com/telekom/das-schiff-network-operator/controllers/operator"
-	"github.com/telekom/das-schiff-network-operator/pkg/reconciler/operator"
 	"os"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"time"
 
+	operator2 "github.com/telekom/das-schiff-network-operator/controllers/operator"
+	"github.com/telekom/das-schiff-network-operator/pkg/reconciler/operator"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
@@ -37,6 +39,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.) //nolint:gci
 	// to ensure that exec-entrypoint and run can make use of them.
+	"github.com/open-policy-agent/cert-controller/pkg/rotator"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -106,6 +109,41 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
+	}
+
+	var webhooks []rotator.WebhookInfo
+
+	webhooks = append(webhooks, rotator.WebhookInfo{
+		Name: "network-operator-validating-webhook-configuration",
+		Type: rotator.Validating,
+	})
+
+	webhooks = append(webhooks, rotator.WebhookInfo{
+		Name: "network-operator-mutating-webhook-configuration",
+		Type: rotator.Mutating,
+	})
+
+	// Make sure certs are generated and valid if cert rotation is enabled.
+	setupFinished := make(chan struct{})
+	if true {
+		setupLog.Info("setting up cert rotation")
+		if err := rotator.AddRotator(mgr, &rotator.CertRotator{
+			SecretKey: types.NamespacedName{
+				Namespace: "kube-system",
+				Name:      "network-operator-webhook-server-cert",
+			},
+			CertDir:        "/certs",
+			CAName:         "network-operator-ca",
+			CAOrganization: "network-operator",
+			DNSName:        fmt.Sprintf("%s.%s.svc", "network-operator-webhook-service", "kube-system"),
+			IsReady:        setupFinished,
+			Webhooks:       webhooks,
+		}); err != nil {
+			setupLog.Error(err, "unable to set up cert rotation")
+			os.Exit(1)
+		}
+	} else {
+		close(setupFinished)
 	}
 
 	err = setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating)

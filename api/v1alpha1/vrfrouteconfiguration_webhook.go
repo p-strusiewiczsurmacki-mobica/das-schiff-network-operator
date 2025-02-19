@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -44,10 +45,10 @@ func (r *VRFRouteConfiguration) SetupWebhookWithManager(mgr ctrl.Manager) error 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 //+kubebuilder:webhook:path=/validate-network-schiff-telekom-de-v1alpha1-vrfrouteconfiguration,mutating=false,failurePolicy=fail,sideEffects=None,groups=network.t-caas.telekom.com,resources=vrfrouteconfigurations,verbs=create;update,versions=v1alpha1,name=vvrfrouteconfiguration.kb.io,admissionReviewVersions=v1
 
-var _ webhook.Validator = &VRFRouteConfiguration{}
+var _ webhook.CustomValidator = &VRFRouteConfiguration{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (r *VRFRouteConfiguration) ValidateCreate() (admission.Warnings, error) {
+func (r *VRFRouteConfiguration) ValidateCreate(context.Context, runtime.Object) (admission.Warnings, error) {
 	vrfrouteconfigurationlog.Info("validate create", "name", r.Name)
 
 	err := r.validateItems()
@@ -59,7 +60,7 @@ func (r *VRFRouteConfiguration) ValidateCreate() (admission.Warnings, error) {
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (r *VRFRouteConfiguration) ValidateUpdate(runtime.Object) (admission.Warnings, error) {
+func (r *VRFRouteConfiguration) ValidateUpdate(context.Context, runtime.Object, runtime.Object) (admission.Warnings, error) {
 	vrfrouteconfigurationlog.Info("validate update", "name", r.Name)
 
 	err := r.validateItems()
@@ -71,7 +72,7 @@ func (r *VRFRouteConfiguration) ValidateUpdate(runtime.Object) (admission.Warnin
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (r *VRFRouteConfiguration) ValidateDelete() (admission.Warnings, error) {
+func (r *VRFRouteConfiguration) ValidateDelete(context.Context, runtime.Object) (admission.Warnings, error) {
 	vrfrouteconfigurationlog.Info("validate delete", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object deletion.
