@@ -2,8 +2,6 @@ module github.com/telekom/das-schiff-network-operator
 
 go 1.23.0
 
-toolchain go1.24.0
-
 require (
 	github.com/cnf/structhash v0.0.0-20201127153200-e1b16c1ebc08
 	github.com/coreos/go-systemd/v22 v22.5.0

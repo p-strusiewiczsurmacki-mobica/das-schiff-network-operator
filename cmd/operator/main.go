@@ -136,6 +136,7 @@ func main() {
 			CAName:         "network-operator-ca",
 			CAOrganization: "network-operator",
 			DNSName:        fmt.Sprintf("%s.%s.svc", "network-operator-webhook-service", "kube-system"),
+			ExtraDNSNames:  []string{fmt.Sprintf("%s.%s.svc.cluster.local", "network-operator-webhook-service", "kube-system")},
 			IsReady:        setupFinished,
 			Webhooks:       webhooks,
 		}); err != nil {

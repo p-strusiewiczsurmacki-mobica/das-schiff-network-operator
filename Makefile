@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= ghcr.io/telekom/das-schiff-network-operator:latest
+IMG ?= harbor.local/library/das-schiff-network-operator:v1
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25
 
@@ -82,6 +82,10 @@ docker-push: ## Push docker image with the manager.
 .PHONY: docker-push-sidecar
 docker-push-sidecar: ## Push docker image with the manager.
 	docker push ${SIDECAR_IMG}
+
+	.PHONY: docker-build
+docker-build: #test ## Build docker image with the manager.
+	docker build --build-arg ldflags="$(LDFLAGS)" -f das-schiff-cra-frr.Dockerfile -t ${IMG} .
 
 
 ##@ Release
