@@ -13,4 +13,4 @@ kind: Kustomization
 images:
 - name: operator
   newName: harbor.local/library/das-schiff-network-operator
-  newTag: v1.6
+  newTag: v1.25

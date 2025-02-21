@@ -118,11 +118,6 @@ func main() {
 		Type: rotator.Validating,
 	})
 
-	// webhooks = append(webhooks, rotator.WebhookInfo{
-	// 	Name: "network-operator-mutating-webhook-configuration",
-	// 	Type: rotator.Mutating,
-	// })
-
 	// Make sure certs are generated and valid if cert rotation is enabled.
 	setupFinished := make(chan struct{})
 	if true {
@@ -132,14 +127,15 @@ func main() {
 				Namespace: "kube-system",
 				Name:      "network-operator-webhook-server-cert",
 			},
-			CertDir:               "/certs",
-			CAName:                "network-operator-ca",
-			CAOrganization:        "network-operator",
-			DNSName:               fmt.Sprintf("%s.%s.svc", "network-operator-webhook-service", "kube-system"),
-			ExtraDNSNames:         []string{fmt.Sprintf("%s.%s.svc.cluster.local", "network-operator-webhook-service", "kube-system")},
-			IsReady:               setupFinished,
-			RequireLeaderElection: true,
-			Webhooks:              webhooks,
+			CertDir:                "/certs",
+			CAName:                 "network-operator-ca",
+			CAOrganization:         "network-operator",
+			DNSName:                fmt.Sprintf("%s.%s.svc", "network-operator-webhook-service", "kube-system"),
+			ExtraDNSNames:          []string{fmt.Sprintf("%s.%s.svc.cluster.local", "network-operator-webhook-service", "kube-system")},
+			IsReady:                setupFinished,
+			RequireLeaderElection:  true,
+			Webhooks:               webhooks,
+			RestartOnSecretRefresh: true,
 		}); err != nil {
 			setupLog.Error(err, "unable to set up cert rotation")
 			os.Exit(1)
@@ -148,11 +144,11 @@ func main() {
 		close(setupFinished)
 	}
 
-	err = setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating)
-	if err != nil {
-		setupLog.Error(err, "unable to setup reconcilers")
-		os.Exit(1)
-	}
+	// err = setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating)
+	// if err != nil {
+	// 	setupLog.Error(err, "unable to setup reconcilers")
+	// 	os.Exit(1)
+	// }
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

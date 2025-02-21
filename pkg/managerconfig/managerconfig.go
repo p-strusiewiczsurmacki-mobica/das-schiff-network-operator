@@ -75,7 +75,8 @@ func prepareManagerOptions(cfg *Config, scheme *runtime.Scheme) manager.Options 
 		PprofBindAddress: cfg.Pprof.BindAddress,
 		WebhookServer: &webhook.DefaultServer{
 			Options: webhook.Options{
-				Port: cfg.Webhook.Port,
+				Port:    cfg.Webhook.Port,
+				CertDir: "/certs",
 			},
 		},
 		LeaderElection:   cfg.LeaderElection.LeaderElect,
