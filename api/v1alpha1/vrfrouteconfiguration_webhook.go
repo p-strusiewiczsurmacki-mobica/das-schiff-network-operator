@@ -34,7 +34,7 @@ const geLen = 8
 var vrfrouteconfigurationlog = logf.Log.WithName("vrfrouteconfiguration-resource")
 
 func (r *VRFRouteConfiguration) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	if err := ctrl.NewWebhookManagedBy(mgr).For(r).Complete(); err != nil {
+	if err := ctrl.NewWebhookManagedBy(mgr).For(r).WithValidator(r).Complete(); err != nil {
 		return fmt.Errorf("error building webhook: %w", err)
 	}
 	return nil

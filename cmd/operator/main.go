@@ -26,7 +26,9 @@ import (
 
 	operator2 "github.com/telekom/das-schiff-network-operator/controllers/operator"
 	"github.com/telekom/das-schiff-network-operator/pkg/reconciler/operator"
+	"github.com/telekom/das-schiff-network-operator/pkg/utils"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -68,6 +70,8 @@ func main() {
 	var configTimeout string
 	var preconfigTimeout string
 	var maxUpdating int
+	var disableCertRotation bool
+	var disableRestartOnCertRefresh bool
 	flag.StringVar(&configFile, "config", "",
 		"The controller will load its initial configuration from this file. "+
 			"Omit this flag to use the default configuration values. "+
@@ -77,6 +81,8 @@ func main() {
 	flag.StringVar(&preconfigTimeout, "preconfig-timeout", operator.DefaultPreconfigTimout, "Timoeut for NodeConfig reconciliation process, when agent DID NOT picked the work yet")
 	flag.StringVar(&configTimeout, "config-timeout", operator.DefaultConfigTimeout, "Timoeut for NodeConfig reconciliation process, when agent picked the work")
 	flag.IntVar(&maxUpdating, "max-updating", 1, "Configures how many nodes can be updated simultaneously when rolling update is performed.")
+	flag.BoolVar(&disableCertRotation, "disable-cert-rotation", false, "Disables certificate rotation if set true.")
+	flag.BoolVar(&disableRestartOnCertRefresh, "disable-restart-on-cert-rotation", false, "Disables operator's restart after certificates refresh was performed.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -118,24 +124,29 @@ func main() {
 		Type: rotator.Validating,
 	})
 
+	podNamespace := utils.GetNamespace()
+	baseName := "network-operator-webhook"
+	serviceName := fmt.Sprintf("%s-service", baseName)
+	seecretName := fmt.Sprintf("%s-server-cert", baseName)
+
 	// Make sure certs are generated and valid if cert rotation is enabled.
 	setupFinished := make(chan struct{})
-	if true {
+	if !disableCertRotation {
 		setupLog.Info("setting up cert rotation")
 		if err := rotator.AddRotator(mgr, &rotator.CertRotator{
 			SecretKey: types.NamespacedName{
-				Namespace: "kube-system",
-				Name:      "network-operator-webhook-server-cert",
+				Namespace: podNamespace,
+				Name:      seecretName,
 			},
 			CertDir:                "/certs",
 			CAName:                 "network-operator-ca",
 			CAOrganization:         "network-operator",
-			DNSName:                fmt.Sprintf("%s.%s.svc", "network-operator-webhook-service", "kube-system"),
-			ExtraDNSNames:          []string{fmt.Sprintf("%s.%s.svc.cluster.local", "network-operator-webhook-service", "kube-system")},
+			DNSName:                fmt.Sprintf("%s.%s.svc", serviceName, podNamespace),
+			ExtraDNSNames:          []string{fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, podNamespace)},
 			IsReady:                setupFinished,
 			RequireLeaderElection:  true,
 			Webhooks:               webhooks,
-			RestartOnSecretRefresh: true,
+			RestartOnSecretRefresh: !disableRestartOnCertRefresh,
 		}); err != nil {
 			setupLog.Error(err, "unable to set up cert rotation")
 			os.Exit(1)
@@ -144,20 +155,56 @@ func main() {
 		close(setupFinished)
 	}
 
-	// err = setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating)
-	// if err != nil {
-	// 	setupLog.Error(err, "unable to setup reconcilers")
-	// 	os.Exit(1)
-	// }
+	setupErr := make(chan error)
+	webhookErr := make(chan error)
+	ctx := ctrl.SetupSignalHandler()
+
+	go func() {
+		setupErr <- setupReconcilers(ctx, mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating, setupFinished, webhookErr)
+	}()
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
+	mgrErr := make(chan error)
+	go func() {
+		if err := mgr.Start(ctx); err != nil {
+			mgrErr <- err
+		}
+		close(mgrErr)
+	}()
+
+	hadError := false
+blockingLoop:
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-setupErr:
+			if err != nil {
+				setupLog.Error(err, "unable to setup reconcilers")
+				hadError = true
+				break blockingLoop
+			}
+		case err := <-mgrErr:
+			if err != nil {
+				setupLog.Error(err, "problem running manager")
+				hadError = true
+			}
+			// if manager has returned, we should exit the program
+			break blockingLoop
+		case err := <-webhookErr:
+			if err != nil {
+				setupLog.Error(err, "problem running webhook")
+				hadError = true
+			}
+			// if webhook has returned, we should exit the program
+			break blockingLoop
+		}
+	}
+
+	if hadError {
 		os.Exit(1)
 	}
 }
 
-func setupReconcilers(mgr manager.Manager, apiTimeout, configTimeout, preconfigTimeout string, maxUpdating int) error {
+func setupReconcilers(_ context.Context, mgr manager.Manager, apiTimeout, configTimeout, preconfigTimeout string, maxUpdating int, setupFinished chan struct{}, _ chan error) error {
 	apiTimoutVal, err := time.ParseDuration(apiTimeout)
 	if err != nil {
 		return fmt.Errorf("error parsing API timeout value %s: %w", apiTimeout, err)
@@ -183,6 +230,13 @@ func setupReconcilers(mgr manager.Manager, apiTimeout, configTimeout, preconfigT
 		return fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
+	<-setupFinished
+
+	if err := mgr.Add(mgr.GetWebhookServer()); err != nil {
+		setupLog.Error(err, "error adding webhook explicitly")
+		return fmt.Errorf("error adding webhook explicitly: %w", err)
+	}
+
 	initialSetup := newOnLeaderElectionEvent(cr)
 	if err := mgr.Add(initialSetup); err != nil {
 		return fmt.Errorf("error adding on leader election event to the manager: %w", err)
@@ -204,6 +258,14 @@ func setupReconcilers(mgr manager.Manager, apiTimeout, configTimeout, preconfigT
 		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
+	// setupLog.Info("starting webhook")
+	// go func() {
+	// 	if err := mgr.GetWebhookServer().Start(ctx); err != nil {
+	// 		webhookErr <- err
+	// 	}
+	// 	close(webhookErr)
+	// }()
+
 	return nil
 }
 
@@ -216,7 +278,17 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 			return nil, fmt.Errorf("unable to load the config file: %w", err)
 		}
 	} else {
-		options = ctrl.Options{Scheme: scheme}
+		webhookOpts := webhook.Options{
+			Host:    "",
+			Port:    7443,
+			CertDir: "/certs",
+			// TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
+		}
+
+		options = manager.Options{
+			Scheme:        scheme,
+			WebhookServer: webhook.NewServer(webhookOpts),
+		}
 	}
 
 	// force leader election

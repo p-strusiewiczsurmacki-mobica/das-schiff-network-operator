@@ -3,4 +3,6 @@ kind: VRFRouteConfiguration
 metadata:
   name: vrfrouteconfiguration-sample
 spec:
-  # TODO(user): Add fields here
+  seq: 65534
+  export: []
+  import: []

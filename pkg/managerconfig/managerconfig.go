@@ -1,6 +1,7 @@
 package managerconfig
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 
@@ -77,6 +78,7 @@ func prepareManagerOptions(cfg *Config, scheme *runtime.Scheme) manager.Options 
 			Options: webhook.Options{
 				Port:    cfg.Webhook.Port,
 				CertDir: "/certs",
+				TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
 			},
 		},
 		LeaderElection:   cfg.LeaderElection.LeaderElect,
