@@ -62,6 +62,8 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
+const defaultWebhookPort = 7443
+
 func main() {
 	version.Get().Print(os.Args[0])
 
@@ -103,11 +105,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&networkv1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "VRFRouteConfiguration")
-		os.Exit(1)
-	}
-
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -117,51 +114,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	webhooks := []rotator.WebhookInfo{}
+	var setupFinished chan struct{}
 
-	webhooks = append(webhooks, rotator.WebhookInfo{
-		Name: "network-operator-validating-webhook-configuration",
-		Type: rotator.Validating,
-	})
-
-	podNamespace := utils.GetNamespace()
-	baseName := "network-operator-webhook"
-	serviceName := fmt.Sprintf("%s-service", baseName)
-	seecretName := fmt.Sprintf("%s-server-cert", baseName)
-
-	// Make sure certs are generated and valid if cert rotation is enabled.
-	setupFinished := make(chan struct{})
 	if !disableCertRotation {
-		setupLog.Info("setting up cert rotation")
-		if err := rotator.AddRotator(mgr, &rotator.CertRotator{
-			SecretKey: types.NamespacedName{
-				Namespace: podNamespace,
-				Name:      seecretName,
-			},
-			CertDir:                "/certs",
-			CAName:                 "network-operator-ca",
-			CAOrganization:         "network-operator",
-			DNSName:                fmt.Sprintf("%s.%s.svc", serviceName, podNamespace),
-			ExtraDNSNames:          []string{fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, podNamespace)},
-			IsReady:                setupFinished,
-			RequireLeaderElection:  true,
-			Webhooks:               webhooks,
-			RestartOnSecretRefresh: !disableRestartOnCertRefresh,
-		}); err != nil {
-			setupLog.Error(err, "unable to set up cert rotation")
+		setupFinished, err = setupRotator(mgr, disableRestartOnCertRefresh)
+		if err != nil {
+			setupLog.Error(err, "failed to setup add Rotator")
 			os.Exit(1)
 		}
-	} else {
-		close(setupFinished)
 	}
 
 	setupErr := make(chan error)
-	webhookErr := make(chan error)
-	ctx := ctrl.SetupSignalHandler()
 
 	go func() {
-		setupErr <- setupReconcilers(ctx, mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating, setupFinished, webhookErr)
+		setupErr <- setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating, setupFinished)
 	}()
+
+	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 
 	setupLog.Info("starting manager")
 	mgrErr := make(chan error)
@@ -172,39 +141,99 @@ func main() {
 		close(mgrErr)
 	}()
 
-	hadError := false
-blockingLoop:
-	for i := 0; i < 3; i++ {
+	err = waitForExit(setupErr, mgrErr, cancel)
+	close(setupErr)
+	close(mgrErr)
+
+	if err != nil {
+		setupLog.Error(err, "error")
+		os.Exit(1)
+	}
+
+	os.Exit(0)
+
+	// for {
+	// 	exitValue := 0
+	// 	exit := false
+	// 	select {
+	// 	case err := <-setupErr:
+	// 		if err != nil {
+	// 			setupLog.Error(err, "unable to setup reconcilers")
+	// 			cancel()
+	// 		}
+	// 	case err := <-mgrErr:
+	// 		if err != nil {
+	// 			setupLog.Error(err, "manager error")
+	// 			exitValue = 1
+	// 		} else {
+	// 			exitValue = 0
+	// 		}
+	// 		exit = true
+	// 	}
+	// 	if exit {
+	// 		close(setupErr)
+	// 		close(mgrErr)
+	// 		os.Exit(exitValue)
+	// 	}
+	// }
+}
+
+func waitForExit(setupErr, mgrErr chan error, cancel context.CancelFunc) error {
+	for {
 		select {
 		case err := <-setupErr:
 			if err != nil {
 				setupLog.Error(err, "unable to setup reconcilers")
-				hadError = true
-				break blockingLoop
+				cancel()
 			}
 		case err := <-mgrErr:
 			if err != nil {
-				setupLog.Error(err, "problem running manager")
-				hadError = true
+				setupLog.Error(err, "manager error")
+				return fmt.Errorf("manager error: %w", err)
 			}
-			// if manager has returned, we should exit the program
-			break blockingLoop
-		case err := <-webhookErr:
-			if err != nil {
-				setupLog.Error(err, "problem running webhook")
-				hadError = true
-			}
-			// if webhook has returned, we should exit the program
-			break blockingLoop
+			return nil
 		}
-	}
-
-	if hadError {
-		os.Exit(1)
 	}
 }
 
-func setupReconcilers(_ context.Context, mgr manager.Manager, apiTimeout, configTimeout, preconfigTimeout string, maxUpdating int, setupFinished chan struct{}, _ chan error) error {
+func setupRotator(mgr ctrl.Manager, disableRestartOnCertRefresh bool) (chan struct{}, error) {
+	webhooks := []rotator.WebhookInfo{}
+
+	webhooks = append(webhooks, rotator.WebhookInfo{
+		Name: "network-operator-validating-webhook-configuration",
+		Type: rotator.Validating,
+	})
+
+	podNamespace := utils.GetNamespace()
+	baseName := "network-operator-webhook"
+	serviceName := fmt.Sprintf("%s-service", baseName)
+	secretName := fmt.Sprintf("%s-server-cert", baseName)
+
+	setupFinished := make(chan struct{})
+	setupLog.Info("setting up cert rotation")
+	if err := rotator.AddRotator(mgr, &rotator.CertRotator{
+		SecretKey: types.NamespacedName{
+			Namespace: podNamespace,
+			Name:      secretName,
+		},
+		CertDir:                "/certs",
+		CAName:                 "network-operator-ca",
+		CAOrganization:         "network-operator",
+		DNSName:                fmt.Sprintf("%s.%s.svc", serviceName, podNamespace),
+		ExtraDNSNames:          []string{fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, podNamespace)},
+		IsReady:                setupFinished,
+		RequireLeaderElection:  true,
+		Webhooks:               webhooks,
+		RestartOnSecretRefresh: !disableRestartOnCertRefresh,
+	}); err != nil {
+		close(setupFinished)
+		return nil, fmt.Errorf("unable to set up cert rotation: %w", err)
+	}
+
+	return setupFinished, nil
+}
+
+func setupReconcilers(mgr manager.Manager, apiTimeout, configTimeout, preconfigTimeout string, maxUpdating int, setupFinished chan struct{}) error {
 	apiTimoutVal, err := time.ParseDuration(apiTimeout)
 	if err != nil {
 		return fmt.Errorf("error parsing API timeout value %s: %w", apiTimeout, err)
@@ -231,11 +260,9 @@ func setupReconcilers(_ context.Context, mgr manager.Manager, apiTimeout, config
 	}
 
 	<-setupFinished
+	close(setupFinished)
 
-	if err := mgr.Add(mgr.GetWebhookServer()); err != nil {
-		setupLog.Error(err, "error adding webhook explicitly")
-		return fmt.Errorf("error adding webhook explicitly: %w", err)
-	}
+	setupLog.Info("cert setup finished")
 
 	initialSetup := newOnLeaderElectionEvent(cr)
 	if err := mgr.Add(initialSetup); err != nil {
@@ -258,13 +285,9 @@ func setupReconcilers(_ context.Context, mgr manager.Manager, apiTimeout, config
 		return fmt.Errorf("unable to create RoutingTable controller: %w", err)
 	}
 
-	// setupLog.Info("starting webhook")
-	// go func() {
-	// 	if err := mgr.GetWebhookServer().Start(ctx); err != nil {
-	// 		webhookErr <- err
-	// 	}
-	// 	close(webhookErr)
-	// }()
+	if err = (&networkv1alpha1.VRFRouteConfiguration{}).SetupWebhookWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create webhook for VRFRouteConfiguration: %w", err)
+	}
 
 	return nil
 }
@@ -280,7 +303,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 	} else {
 		webhookOpts := webhook.Options{
 			Host:    "",
-			Port:    7443,
+			Port:    defaultWebhookPort,
 			CertDir: "/certs",
 			// TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
 		}
