@@ -64,4 +64,4 @@ spec:
       volumes:
       - configMap:
           name: network-operator-config
-        name: network-config 
+        name: network-config
