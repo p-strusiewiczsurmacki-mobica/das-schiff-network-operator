@@ -37,8 +37,6 @@ spec:
         image: operator:latest
         imagePullPolicy: IfNotPresent
         name: operator
-        # ports:
-        # - containerPort: 7443
         livenessProbe:
           httpGet:
             path: /healthz

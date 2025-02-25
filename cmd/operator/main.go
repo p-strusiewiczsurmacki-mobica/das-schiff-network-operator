@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -142,9 +143,7 @@ func main() {
 		close(mgrErr)
 	}()
 
-	err = waitForExit(setupErr, mgrErr, cancel)
-
-	if err != nil {
+	if err := waitForExit(setupErr, mgrErr, cancel); err != nil {
 		setupLog.Error(err, "error")
 		os.Exit(1)
 	}
@@ -162,7 +161,6 @@ func waitForExit(setupErr, mgrErr chan error, cancel context.CancelFunc) error {
 			}
 		case err := <-mgrErr:
 			if err != nil {
-				setupLog.Error(err, "manager error")
 				return fmt.Errorf("manager error: %w", err)
 			}
 			return nil
@@ -279,7 +277,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 			Host:    "",
 			Port:    defaultWebhookPort,
 			CertDir: "/certs",
-			// TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
+			TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
 		}
 
 		options = manager.Options{
