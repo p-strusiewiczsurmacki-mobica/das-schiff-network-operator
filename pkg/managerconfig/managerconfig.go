@@ -77,7 +77,7 @@ func prepareManagerOptions(cfg *Config, scheme *runtime.Scheme) manager.Options 
 		WebhookServer: &webhook.DefaultServer{
 			Options: webhook.Options{
 				Port:    cfg.Webhook.Port,
-				CertDir: "/certs",
+				CertDir: "/tmp/k8s-webhook-server/serving-certs",
 				TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
 			},
 		},

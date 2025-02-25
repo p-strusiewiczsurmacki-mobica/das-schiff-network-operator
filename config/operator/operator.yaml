@@ -59,16 +59,9 @@ spec:
         volumeMounts:
         - mountPath: /opt/network-operator
           name: network-config
-        - mountPath: /certs
-          name: cert
-          readOnly: true
       serviceAccountName: network-operator-controller-manager
       terminationGracePeriodSeconds: 10
       volumes:
       - configMap:
           name: network-operator-config
-        name: network-config
-      - name: cert
-        secret:
-          defaultMode: 420
-          secretName: network-operator-webhook-server-cert  
+        name: network-config 

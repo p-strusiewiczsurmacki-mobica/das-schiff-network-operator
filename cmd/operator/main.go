@@ -188,7 +188,7 @@ func setupRotator(mgr ctrl.Manager, disableRestartOnCertRefresh bool) (chan stru
 			Namespace: podNamespace,
 			Name:      secretName,
 		},
-		CertDir:                "/certs",
+		CertDir:                "/tmp/k8s-webhook-server/serving-certs",
 		CAName:                 "network-operator-ca",
 		CAOrganization:         "network-operator",
 		DNSName:                fmt.Sprintf("%s.%s.svc", serviceName, podNamespace),
@@ -276,7 +276,7 @@ func setMangerOptions(configFile string) (*manager.Options, error) {
 		webhookOpts := webhook.Options{
 			Host:    "",
 			Port:    defaultWebhookPort,
-			CertDir: "/certs",
+			CertDir: "/tmp/k8s-webhook-server/serving-certs",
 			TLSOpts: []func(c *tls.Config){func(c *tls.Config) { c.MinVersion = tls.VersionTLS13 }},
 		}
 
