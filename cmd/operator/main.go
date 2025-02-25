@@ -128,6 +128,7 @@ func main() {
 
 	go func() {
 		setupErr <- setupReconcilers(mgr, apiTimeout, configTimeout, preconfigTimeout, maxUpdating, setupFinished)
+		close(setupErr)
 	}()
 
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
@@ -142,8 +143,6 @@ func main() {
 	}()
 
 	err = waitForExit(setupErr, mgrErr, cancel)
-	close(setupErr)
-	close(mgrErr)
 
 	if err != nil {
 		setupLog.Error(err, "error")
@@ -151,31 +150,6 @@ func main() {
 	}
 
 	os.Exit(0)
-
-	// for {
-	// 	exitValue := 0
-	// 	exit := false
-	// 	select {
-	// 	case err := <-setupErr:
-	// 		if err != nil {
-	// 			setupLog.Error(err, "unable to setup reconcilers")
-	// 			cancel()
-	// 		}
-	// 	case err := <-mgrErr:
-	// 		if err != nil {
-	// 			setupLog.Error(err, "manager error")
-	// 			exitValue = 1
-	// 		} else {
-	// 			exitValue = 0
-	// 		}
-	// 		exit = true
-	// 	}
-	// 	if exit {
-	// 		close(setupErr)
-	// 		close(mgrErr)
-	// 		os.Exit(exitValue)
-	// 	}
-	// }
 }
 
 func waitForExit(setupErr, mgrErr chan error, cancel context.CancelFunc) error {
@@ -197,12 +171,12 @@ func waitForExit(setupErr, mgrErr chan error, cancel context.CancelFunc) error {
 }
 
 func setupRotator(mgr ctrl.Manager, disableRestartOnCertRefresh bool) (chan struct{}, error) {
-	webhooks := []rotator.WebhookInfo{}
-
-	webhooks = append(webhooks, rotator.WebhookInfo{
-		Name: "network-operator-validating-webhook-configuration",
-		Type: rotator.Validating,
-	})
+	webhooks := []rotator.WebhookInfo{
+		{
+			Name: "network-operator-validating-webhook-configuration",
+			Type: rotator.Validating,
+		},
+	}
 
 	podNamespace := utils.GetNamespace()
 	baseName := "network-operator-webhook"
@@ -259,10 +233,10 @@ func setupReconcilers(mgr manager.Manager, apiTimeout, configTimeout, preconfigT
 		return fmt.Errorf("unable to create node reconciler: %w", err)
 	}
 
-	<-setupFinished
-	close(setupFinished)
-
-	setupLog.Info("cert setup finished")
+	if setupFinished != nil {
+		<-setupFinished
+		setupLog.Info("cert setup finished")
+	}
 
 	initialSetup := newOnLeaderElectionEvent(cr)
 	if err := mgr.Add(initialSetup); err != nil {
