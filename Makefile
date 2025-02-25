@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= harbor.local/library/das-schiff-network-operator:v1.54
+IMG ?= ghcr.io/telekom/das-schiff-network-operator:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25
 
